@@ -1,0 +1,97 @@
+{
+  "vehicles": [
+    {
+      "id": "bus-101",
+      "name": "Chotanagpur Plateau Express",
+      "type": "Luxury Electric Bus",
+      "plate": "JH-01-ET-4492",
+      "route": "Ranchi Junction → Netarhat Magnolia Point",
+      "lat": 23.4235,
+      "lng": 84.8309,
+      "speedKmH": 48,
+      "status": "In Transit",
+      "nextStop": "Ghaghra Junction (ETA: 18 mins)",
+      "capacity": 42,
+      "occupied": 28,
+      "driver": "Manoj Kerketta",
+      "contact": "+91 94311 02911"
+    },
+    {
+      "id": "van-202",
+      "name": "Betla Tiger Reserve Safari Gypsy #04",
+      "type": "Open 4x4 Safari Van",
+      "plate": "JH-03-TR-1823",
+      "route": "Betla Gate 1 → Kechki Sangam & Palamu Forts",
+      "lat": 23.8754,
+      "lng": 84.2133,
+      "speedKmH": 37,
+      "status": "Active Safari",
+      "nextStop": "Old Palamu Fort Watchtower (ETA: 8 mins)",
+      "capacity": 8,
+      "occupied": 6,
+      "driver": "Somra Munda",
+      "contact": "+91 98350 49120"
+    },
+    {
+      "id": "shuttle-303",
+      "name": "Baidyanath Dham Shravani Shuttle",
+      "type": "AC Tourist Minibus",
+      "plate": "JH-15-DX-9011",
+      "route": "Jasidih Railway Station → Baba Baidyanath Temple",
+      "lat": 24.5158,
+      "lng": 86.6595,
+      "speedKmH": 31,
+      "status": "In Transit",
+      "nextStop": "Tower Chowk Deoghar (ETA: 10 mins)",
+      "capacity": 26,
+      "occupied": 22,
+      "driver": "Alok Kumar Jha",
+      "contact": "+91 97710 88231"
+    },
+    {
+      "id": "cab-404",
+      "name": "Patratu Valley Eco Cab",
+      "type": "EV Sedan",
+      "plate": "JH-01-EV-3108",
+      "route": "Ranchi Airport → Patratu Dam Lake Resort",
+      "lat": 23.5901,
+      "lng": 85.3104,
+      "speedKmH": 41,
+      "status": "In Transit",
+      "nextStop": "Patratu S-Curve Overlook (ETA: 14 mins)",
+      "capacity": 4,
+      "occupied": 2,
+      "driver": "Sanjay Soren",
+      "contact": "+91 93041 55670"
+    }
+  ],
+  "alerts": [
+    {
+      "id": "alert-1",
+      "type": "Weather",
+      "severity": "Warning",
+      "title": "Dense Morning Mist & Scenic Fog Advisory",
+      "location": "Netarhat Plateau & Upper Ghaghri",
+      "message": "Heavy morning mist across Magnolia Point. Vehicles advised to drive below 35 km/h with fog lamps active.",
+      "timestamp": "2026-09-14T06:00:00Z"
+    },
+    {
+      "id": "alert-2",
+      "type": "Festival",
+      "severity": "Info",
+      "title": "Grand Sarhul Spring Festival Celebrations",
+      "location": "Ranchi, Hazaribagh & Latehar",
+      "message": "Sacred Sal tree worship celebrations underway. Traditional folk dance processions at Morabadi ground starting 3:00 PM.",
+      "timestamp": "2026-09-14T08:30:00Z"
+    },
+    {
+      "id": "alert-3",
+      "type": "Safety",
+      "severity": "Alert",
+      "title": "High Water Current Precaution",
+      "location": "Hundru Waterfalls Plunge Pool",
+      "message": "Water levels increased due to upstream dam release. Swimming restricted to demarcated safety zone under lifeguard supervision.",
+      "timestamp": "2026-09-14T11:15:00Z"
+    }
+  ]
+}

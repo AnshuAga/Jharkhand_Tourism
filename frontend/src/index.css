@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+
+body {
+  @apply bg-slate-50 text-slate-800 antialiased;
+}
+
+.input {
+  width: 100%;
+  background: rgba(2, 6, 23, 0.7);
+  border: 1px solid rgb(30 41 59);
+  border-radius: 0.75rem;
+  padding: 0.875rem 1rem;
+  color: rgb(226 232 240);
+  outline: none;
+  transition: all 0.2s ease;
+  color-scheme: dark;
+}
+
+.input:focus {
+  border-color: rgb(251 191 36);
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.08);
+}
+
+.input::placeholder {
+  color: rgb(100 116 139);
+}
+
+.input option {
+  background: #0b1326;
+  color: #e2e8f0;
+}
+
+.planner-select {
+  color-scheme: dark;
+}
+
+.planner-select option {
+  background: #0b1326;
+  color: #e2e8f0;
+}
+
+select.input {
+  appearance: auto;
+}
+
+.filter-select {
+  width: 100%;
+  margin-top: 0.75rem;
+  background: rgba(2, 6, 23, 0.7);
+  border: 1px solid rgb(30 41 59);
+  border-radius: 0.75rem;
+  padding: 0.875rem 1rem;
+  color: rgb(226 232 240);
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.filter-select:focus {
+  border-color: rgb(251 191 36);
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.08);
+}
+
+.filter-select option {
+  background: #0b1326;
+  color: #e2e8f0;
+}

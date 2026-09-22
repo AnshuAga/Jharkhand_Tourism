@@ -1,0 +1,107 @@
+[
+  {
+    "id": "rev-1",
+    "destinationId": "netarhat",
+    "destinationName": "Netarhat",
+    "providerId": "JH-GUIDE-108",
+    "userId": "usr-tourist-1",
+    "userName": "Aarav Sharma",
+    "rating": 5.0,
+    "reviewText": "The sunrise at Magnolia Point was breathtaking! Our verified guide was punctual, deeply knowledgeable, and our homestay served delicious local food. Highly recommended!",
+    "sentiment": "Positive",
+    "compoundScore": 0.94,
+    "aspects": {
+      "hospitality": 5.0,
+      "cleanliness": 4.8,
+      "transport": 4.7,
+      "food": 5.0,
+      "safety": 5.0
+    },
+    "emotion": "Excited",
+    "createdAt": "2026-02-18T10:14:00Z"
+  },
+  {
+    "id": "rev-2",
+    "destinationId": "hundru-falls",
+    "destinationName": "Hundru Falls",
+    "providerId": "JH-GUIDE-108",
+    "userId": "usr-tourist-2",
+    "userName": "Priya Venkat",
+    "rating": 4.8,
+    "reviewText": "The waterfall plunge pool is mesmerizing. The local authorities have maintained clean pathways and guard rails, making it very safe for families.",
+    "sentiment": "Positive",
+    "compoundScore": 0.88,
+    "aspects": {
+      "hospitality": 4.6,
+      "cleanliness": 4.5,
+      "transport": 4.2,
+      "food": 4.0,
+      "safety": 4.9
+    },
+    "emotion": "Happy",
+    "createdAt": "2026-02-22T14:20:00Z"
+  },
+  {
+    "id": "rev-3",
+    "destinationId": "betla-national-park",
+    "destinationName": "Betla National Park",
+    "providerId": "JH-GUIDE-108",
+    "userId": "usr-tourist-3",
+    "userName": "Vikramaditya Roy",
+    "rating": 4.9,
+    "reviewText": "Spotted wild elephants and gaur near the 16th-century Chero dynasty fort ruins! Exceptional wildlife tracking by our guide.",
+    "sentiment": "Positive",
+    "compoundScore": 0.91,
+    "aspects": {
+      "hospitality": 5.0,
+      "cleanliness": 4.6,
+      "transport": 4.5,
+      "food": 4.3,
+      "safety": 4.8
+    },
+    "emotion": "Excited",
+    "createdAt": "2026-03-01T09:45:00Z"
+  },
+  {
+    "id": "rev-4",
+    "destinationId": "deoghar",
+    "destinationName": "Deoghar",
+    "providerId": "JH-GUIDE-204",
+    "userId": "usr-tourist-4",
+    "userName": "Meera Banerjee",
+    "rating": 4.5,
+    "reviewText": "Baba Baidyanath Jyotirlinga darshan was deeply spiritual. The temple complex was crowded, but queue management was orderly.",
+    "sentiment": "Positive",
+    "compoundScore": 0.76,
+    "aspects": {
+      "hospitality": 4.5,
+      "cleanliness": 3.8,
+      "transport": 4.0,
+      "food": 4.8,
+      "safety": 4.6
+    },
+    "emotion": "Happy",
+    "createdAt": "2026-03-04T16:10:00Z"
+  },
+  {
+    "id": "rev-5",
+    "destinationId": "patratu-valley",
+    "destinationName": "Patratu Valley",
+    "providerId": "JH-HOTEL-305",
+    "userId": "usr-tourist-5",
+    "userName": "Rohan Deshmukh",
+    "rating": 3.2,
+    "reviewText": "Scenic road is gorgeous, but road repair work caused traffic delays and parking was cramped near the dam.",
+    "sentiment": "Neutral",
+    "compoundScore": 0.12,
+    "aspects": {
+      "hospitality": 3.5,
+      "cleanliness": 3.2,
+      "transport": 2.2,
+      "food": 3.6,
+      "safety": 3.9
+    },
+    "emotion": "Frustrated",
+    "createdAt": "2026-03-08T18:30:00Z"
+  }
+]

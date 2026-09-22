@@ -1,0 +1,210 @@
+{
+  "products": [
+    {
+      "id": "prod-1",
+      "name": "Sohrai Peacock Painting",
+      "category": "Paintings",
+      "district": "Hazaribagh",
+      "material": "Natural pigments",
+      "price": 2695,
+      "rating": 4.9,
+      "reviews": 48,
+      "artisan": "Hazaribagh Tribal Artists Cooperative",
+      "image": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Sohrai_painting,_Jharkhand.jpg",
+      "description": "Traditional Sohrai artwork inspired by the animal, forest and fertility motifs of Hazaribagh.",
+      "badge": "Heritage",
+      "inStock": 15,
+      "vendorId": "user-vendor-1"
+    },
+    {
+      "id": "prod-2",
+      "name": "Dhokra Nandi Pair",
+      "category": "Dhokra",
+      "district": "Ramgarh",
+      "material": "Brass",
+      "price": 2995,
+      "rating": 4.8,
+      "reviews": 42,
+      "artisan": "Jharkhand Dhokra Artisan Guild",
+      "image": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Dokra_from_tribes_of_Bastar_DSCN1172_01.jpg",
+      "description": "Hand-cast Dhokra Nandi figures made using the ancient lost-wax metal casting technique.",
+      "badge": "Handmade",
+      "inStock": 8,
+      "vendorId": "user-vendor-2"
+    },
+    {
+      "id": "prod-3",
+      "name": "Handwoven Tasar Silk Saree",
+      "category": "Textiles",
+      "district": "Ranchi",
+      "material": "Tasar Silk",
+      "price": 3200,
+      "rating": 4.8,
+      "reviews": 61,
+      "artisan": "Jharcraft Weavers Society",
+      "image": "https://www.jiomart.com/images/product/original/rvybw3lmm1/jharcraft-a-jharkhand-govt-enterprise-reeled-tasar-gheecha-silk-printed-saree-product-images-orvybw3lmm1-p609022685-2-202405190828.jpg?im=Resize%3D%281000%2C1000%29",
+      "description": "Jharkhand Tasar silk textile with traditional handloom character and natural botanical dyes.",
+      "badge": "Tasar Silk",
+      "inStock": 12,
+      "vendorId": "user-vendor-1"
+    },
+    {
+      "id": "prod-4",
+      "name": "Jharkhand Bamboo Fruit Basket",
+      "category": "Bamboo",
+      "district": "Dumka",
+      "material": "Bamboo",
+      "price": 1250,
+      "rating": 4.7,
+      "reviews": 31,
+      "artisan": "Dumka Bamboo Artisans Collective",
+      "image": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Bamboo_Basket_of_Jharkhand.jpg",
+      "description": "Handwoven bamboo basket made using traditional rural indigenous split-cane techniques.",
+      "badge": "Eco Craft",
+      "inStock": 20,
+      "vendorId": "user-vendor-1"
+    },
+    {
+      "id": "prod-5",
+      "name": "Traditional Tribal Silver Anklets",
+      "category": "Jewellery",
+      "district": "Ranchi",
+      "material": "Silver",
+      "price": 1850,
+      "rating": 4.6,
+      "reviews": 27,
+      "artisan": "Chotanagpur Silversmith Guild",
+      "image": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Anklets,Payal,_Jharkhand.jpg",
+      "description": "Authentic silver anklets and payals sculpted in customary Santhal and Oraon ceremonial patterns.",
+      "badge": "Traditional",
+      "inStock": 6,
+      "vendorId": "user-vendor-2"
+    },
+    {
+      "id": "prod-6",
+      "name": "Dhokra Fisherwoman Figurine",
+      "category": "Dhokra",
+      "district": "Ramgarh",
+      "material": "Brass",
+      "price": 1495,
+      "rating": 4.8,
+      "reviews": 39,
+      "artisan": "Pancham Malhar",
+      "image": "https://static.wixstatic.com/media/9dd462_5db601b5d3a6482a9650f5e40474d9c6~mv2.jpg/v1/fill/w_1340,h_960,al_c,q_85,enc_avif,quality_auto/9dd462_5db601b5d3a6482a9650f5e40474d9c6~mv2.jpg",
+      "description": "Handcrafted Dhokra figurine portraying a village fisherwoman, celebrated tribal lost-wax metallurgy.",
+      "badge": "Handmade",
+      "inStock": 10,
+      "vendorId": "user-vendor-2"
+    }
+  ],
+  "homestays": [
+    {
+      "id": "stay-1",
+      "name": "Netarhat Pine Mist Heritage Homestay",
+      "district": "Latehar",
+      "location": "Netarhat Plateau",
+      "pricePerNight": 2800,
+      "rating": 4.9,
+      "host": "Rajeshwar Asur",
+      "amenities": ["Local Asur Tribal Cuisine", "Pine Forest View", "Campfire", "Guided Sunrise Trek"],
+      "image": "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1000&q=80",
+      "verifiedStatus": "Blockchain Certified (NFT: 0x9b32...88)"
+    },
+    {
+      "id": "stay-2",
+      "name": "Betla Jungle Safari Cottage",
+      "district": "Latehar",
+      "location": "Betla Tiger Reserve Gate",
+      "pricePerNight": 3200,
+      "rating": 4.8,
+      "host": "Birsa Oraon",
+      "amenities": ["Jeep Safari Booking Support", "Treehouse Balcony", "Organic Local Meals"],
+      "image": "https://images.unsplash.com/photo-1596176530529-78163a4f7af2?auto=format&fit=crop&w=1000&q=80",
+      "verifiedStatus": "Blockchain Certified (NFT: 0x7c41...23)"
+    },
+    {
+      "id": "stay-3",
+      "name": "Patratu Valley Eco Homestay",
+      "district": "Ramgarh",
+      "location": "Patratu Dam Scenic Overlook",
+      "pricePerNight": 2500,
+      "rating": 4.7,
+      "host": "Sunita Mahto",
+      "amenities": ["Lake View Terrace", "Speedboat Access", "Traditional Khasi Rice Platter"],
+      "image": "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1000&q=80",
+      "verifiedStatus": "Blockchain Certified (NFT: 0x2e19...5a)"
+    }
+  ],
+  "guides": [
+    {
+      "id": "guide-1",
+      "name": "Birsa Munda Heritage & Eco Guide Unit",
+      "badgeId": "JH-GUIDE-108",
+      "district": "Ranchi & Latehar",
+      "specialization": "Eco-Trek, Waterfalls & Ancient Chero Dynasty History",
+      "languages": ["English", "Hindi", "Santali", "Mundari"],
+      "dailyRate": 1800,
+      "rating": 4.95,
+      "verified": true,
+      "certificateHash": "0x4f9a7c8e2193bf4a87102eef9b64c12348bf12aa09c84e1b8c2d9e03f56a78bc",
+      "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80"
+    },
+    {
+      "id": "guide-2",
+      "name": "Shambhu Nath - Baidyanath Pilgrimage Historian",
+      "badgeId": "JH-GUIDE-204",
+      "district": "Deoghar",
+      "specialization": "Vedic Temple Architecture & Tapovan Caves",
+      "languages": ["English", "Hindi", "Bengali"],
+      "dailyRate": 1500,
+      "rating": 4.9,
+      "verified": true,
+      "certificateHash": "0x88c24f11a094bb762deca18231904e5bfca7819034ec62b089c89134a6ef2911",
+      "avatar": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80"
+    }
+  ],
+  "packages": [
+    {
+      "id": "pkg-nature",
+      "title": "The Nature & Wildlife Trail",
+      "duration": "4 Days / 3 Nights",
+      "price": 34500,
+      "category": "nature",
+      "desc": "Immerse yourself in misty hill stations, cascading waterfalls, and dense Sal forests of Netarhat and Betla National Park.",
+      "image": "https://images.unsplash.com/photo-1596176530529-78163a4f7af2?auto=format&fit=crop&w=1200&q=80",
+      "highlights": [
+        "Hundru & Jonha Waterfalls Guided Trek",
+        "Betla National Park Exclusive Jeep Safari",
+        "Netarhat Sunrise Experience at Magnolia Point"
+      ]
+    },
+    {
+      "id": "pkg-spiritual",
+      "title": "Spiritual & Cultural Heritage Circuit",
+      "duration": "3 Days / 2 Nights",
+      "price": 28000,
+      "category": "spiritual",
+      "desc": "Experience divine tranquility with priority access to sacred shrines and immersive indigenous art explorations across Deoghar and Parasnath.",
+      "image": "https://images.unsplash.com/photo-1621699765101-f1873fb2a1d4?auto=format&fit=crop&w=1200&q=80",
+      "highlights": [
+        "Baidyanath Temple Priority Smart-Contract Darshan",
+        "Parasnath Hills Heritage & Spiritual Trek",
+        "Santhal & Munda Community Cultural Immersion"
+      ]
+    },
+    {
+      "id": "pkg-luxury",
+      "title": "Royal Tribal Luxe Expedition",
+      "duration": "6 Days / 5 Nights",
+      "price": 65000,
+      "category": "luxury",
+      "desc": "The pinnacle of Jharkhand tourism. Premium accommodations, private helicopter transfers between circuits, and personal curator assistance.",
+      "image": "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80",
+      "highlights": [
+        "Private Air-conditioned Transit & Chopper Support",
+        "VIP Access to State Cultural Galas",
+        "Master Craftsman Private Workshop Sessions"
+      ]
+    }
+  ]
+}

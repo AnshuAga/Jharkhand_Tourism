@@ -1,0 +1,53 @@
+[
+  {
+    "index": 0,
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "hash": "00004a8b79213f56e09c84e1b8c2d9e04f9a7c8e2193bf4a87102eef9b64c123",
+    "data": "Genesis Block - Jharkhand Smart Tourism Public Ledger",
+    "nonce": 10428
+  },
+  {
+    "index": 1,
+    "timestamp": "2026-02-15T10:00:00.000Z",
+    "previousHash": "00004a8b79213f56e09c84e1b8c2d9e04f9a7c8e2193bf4a87102eef9b64c123",
+    "hash": "00007c8e2193bf4a87102eef9b64c12348bf12aa09c84e1b8c2d9e03f56a78bc",
+    "data": {
+      "action": "CERTIFICATE_ISSUANCE",
+      "certificateId": "CERT-JH-108",
+      "providerId": "JH-GUIDE-108",
+      "hash": "0x4f9a7c8e2193bf4a87102eef9b64c12348bf12aa"
+    },
+    "nonce": 28419
+  },
+  {
+    "index": 2,
+    "timestamp": "2026-09-14T18:56:12.810Z",
+    "previousHash": "00007c8e2193bf4a87102eef9b64c12348bf12aa09c84e1b8c2d9e03f56a78bc",
+    "hash": "0x0004cdec0230e469d519dcad0338c0837b828348970d6c184e4051adbbb30168",
+    "data": {
+      "action": "ESCROW_DEPOSIT",
+      "bookingId": "JH-BOOK-1896",
+      "amount": 14500,
+      "touristId": "usr-tourist-guest",
+      "providerId": "JH-GUIDE-108",
+      "contractAddress": "0x8dfc666f197c41f4ca83f2c405d70166d88053e2",
+      "status": "Locked in Escrow"
+    },
+    "nonce": 3459
+  },
+  {
+    "index": 3,
+    "timestamp": "2026-09-14T18:56:12.902Z",
+    "previousHash": "0x0004cdec0230e469d519dcad0338c0837b828348970d6c184e4051adbbb30168",
+    "hash": "0x000c47f141b97b18c3391d61f4a8e1309ec6eef33cbc546b660ed2f5f06eca97",
+    "data": {
+      "action": "ESCROW_SETTLEMENT_RELEASE",
+      "bookingId": "JH-BOOK-1896",
+      "amount": 14500,
+      "providerId": "JH-GUIDE-108",
+      "settledBy": "Birsa Munda Heritage Guides (Guide / Vendor)"
+    },
+    "nonce": 3717
+  }
+]
