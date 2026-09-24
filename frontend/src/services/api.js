@@ -120,6 +120,10 @@ export const api = {
     updateProduct: (id, productData) => request(`/marketplace/products/${id}`, { method: 'PUT', body: JSON.stringify(productData) }),
     deleteProduct: (id) => request(`/marketplace/products/${id}`, { method: 'DELETE' })
   },
+  payments: {
+    createOrder: (bookingData) => request('/payments/order', { method: 'POST', body: JSON.stringify(bookingData) }),
+    verify: (paymentData) => request('/payments/verify', { method: 'POST', body: JSON.stringify(paymentData) })
+  },
   blockchain: {
     verify: (certId) => request('/blockchain/verify', { method: 'POST', body: JSON.stringify({ certId }) }),
     getCertificates: () => request('/blockchain/certificates'),

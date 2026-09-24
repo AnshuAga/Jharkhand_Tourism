@@ -66,7 +66,7 @@ export const paymentController = {
       });
       res.status(201).json({
         success: true, order: { id: order.id, amount: order.amount, currency: order.currency },
-        keyId: process.env.RAZORPAY_KEY_ID, booking, payment: db.payments.findByBookingId(bookingId)
+        keyId: paymentService.getPublicKeyId(), booking, payment: db.payments.findByBookingId(bookingId)
       });
     } catch (error) {
       res.status(error.status || 500).json({ success: false, message: error.message });

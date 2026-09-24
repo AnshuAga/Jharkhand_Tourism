@@ -1,6 +1,7 @@
 import React, { Component, useMemo, useState, useEffect } from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import { api } from "../services/api";
+import { loadRazorpay } from "../services/razorpay";
 import { useAuth } from "../context/AuthContext";
 import {
   ArrowRight,
@@ -746,6 +747,7 @@ export default function AIPlanner() {
     setBookingLoading(true);
     setBookingError('');
     try {
+      const Razorpay = await loadRazorpay();
       const routeText = itinerary?.route?.join(' ➔ ') || 'Jharkhand Circuit';
       const title = `${form.days}-Day ${form.style} Expedition (${routeText})`;
       const bookings = [];
@@ -757,26 +759,53 @@ export default function AIPlanner() {
       for (const serviceId of selectedIds) {
         const service = serviceOptions.find((option) => option.id === serviceId);
         if (!service) throw new Error('One of the selected services is no longer available.');
-        const serviceBooking = await api.marketplace.book({
+        const serviceBooking = await api.payments.createOrder({
           itemType: service.category,
           itemId: service.id,
-          title,
           travelers: form.travelers,
           days: service.category === 'package' ? form.days : (service.duration_days || 1),
           checkInDate: form.tripDate,
-          checkOutDate: addDays(form.tripDate, service.category === 'package' ? form.days : (service.duration_days || 1)),
-          paymentGateway: 'escrow'
+          checkOutDate: addDays(form.tripDate, service.category === 'package' ? form.days : (service.duration_days || 1))
         });
-        bookings.push(serviceBooking.booking || serviceBooking);
+        const verified = await new Promise((resolve, reject) => {
+          const checkout = new Razorpay({
+            key: serviceBooking.keyId,
+            amount: serviceBooking.order.amount,
+            currency: serviceBooking.order.currency,
+            name: 'Jharkhand Tourism',
+            description: title,
+            order_id: serviceBooking.order.id,
+            prefill: { name: user?.name || '', email: user?.email || '' },
+            theme: { color: '#fbbf24' },
+            method: {
+              card: true,
+              upi: true,
+              netbanking: true,
+              wallet: true
+            },
+            handler: async (response) => {
+              try {
+                resolve(await api.payments.verify(response));
+              } catch (error) {
+                reject(error);
+              }
+            },
+            modal: { ondismiss: () => reject(new Error('Payment was cancelled.')) }
+          });
+          checkout.on('payment.failed', (event) => reject(new Error(event?.error?.description || event?.error?.reason || 'Razorpay test payment failed.')));
+          checkout.open();
+        });
+        bookings.push(verified.booking);
       }
 
       if (bookings.length > 0) {
         setBookingSuccess({ ...bookings[0], relatedBookings: bookings.slice(1) });
+        navigate('/tourist#bookings');
       } else {
         throw new Error('Select a package, guide, or accommodation before booking.');
       }
     } catch (err) {
-      setBookingError(err.message || 'Unable to complete smart contract escrow booking');
+      setBookingError(err.message || 'Unable to complete Razorpay test payment.');
     } finally {
       setBookingLoading(false);
     }
@@ -1792,7 +1821,7 @@ export default function AIPlanner() {
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold uppercase tracking-wider">
-                        Smart Contract Escrow Locked
+                        Payment Confirmed - Escrow Locked
                       </span>
                       <span className="text-xs text-slate-400 font-mono">Status: 200 OK</span>
                     </div>
@@ -1803,7 +1832,7 @@ export default function AIPlanner() {
                 </div>
 
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  Your funds of <strong className="text-amber-400">₹{bookingSuccess.total_amount?.toLocaleString('en-IN')}</strong> are locked inside the decentralized Escrow contract. Payout to certified local guides is triggered only upon confirmed completion of your journey.
+                  Your sandbox payment of <strong className="text-amber-400">₹{bookingSuccess.total_amount?.toLocaleString('en-IN')}</strong> has been verified and is locked in the platform escrow. Payout is handled only after confirmed completion of your journey.
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 rounded-2xl bg-slate-950/80 border border-slate-800 font-mono text-xs text-slate-300">
@@ -1816,7 +1845,7 @@ export default function AIPlanner() {
                     <span className="text-emerald-400 font-bold uppercase">{bookingSuccess.escrow_status || 'LOCKED'}</span>
                   </div>
                   <div className="md:col-span-2 truncate">
-                    <span className="text-slate-500 text-[10px] block uppercase">Smart Contract Address</span>
+                    <span className="text-slate-500 text-[10px] block uppercase">Escrow reference</span>
                     <span className="text-slate-300 text-[11px] select-all">{bookingSuccess.contract_address}</span>
                   </div>
                   <div className="md:col-span-2 truncate">
@@ -1837,7 +1866,7 @@ export default function AIPlanner() {
                     to="/verify"
                     className="px-5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-amber-400 text-slate-300 hover:text-white font-semibold text-xs uppercase tracking-wider transition flex items-center gap-1.5"
                   >
-                    <span>Verify on Blockchain Ledger</span>
+                    <span>View booking record</span>
                     <ExternalLink size={14} />
                   </Link>
                 </div>
@@ -1863,12 +1892,12 @@ export default function AIPlanner() {
                   {bookingLoading ? (
                     <>
                       <span className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
-                      <span>Securing Escrow on Blockchain...</span>
+                      <span>Opening Razorpay test checkout...</span>
                     </>
                   ) : (
                     <>
                       <ShieldCheck size={18} />
-                      <span>Book This Itinerary (Smart Contract Escrow)</span>
+                      <span>Book This Itinerary (Razorpay test mode)</span>
                     </>
                   )}
                 </button>

@@ -2,23 +2,37 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 
 let razorpayClient;
+let configuredKey;
 
 function getClient() {
-  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-    const error = new Error('Razorpay is not configured on the server.');
+  const keyId = String(process.env.RAZORPAY_KEY_ID || '').trim();
+  const keySecret = String(process.env.RAZORPAY_KEY_SECRET || '').trim();
+  if (!keyId || !keySecret) {
+    const error = new Error('Razorpay test credentials are not configured on the server.');
     error.status = 503;
     throw error;
   }
-  if (!razorpayClient) {
+  if (!/^rzp_test_[A-Za-z0-9]{14}$/.test(keyId)) {
+    const error = new Error('The Razorpay test key ID is invalid. Generate a fresh rzp_test_ key pair in Razorpay Test Mode.');
+    error.status = 503;
+    throw error;
+  }
+  if (!razorpayClient || configuredKey !== `${keyId}:${keySecret}`) {
     razorpayClient = new Razorpay({
-      key_id: process.env.RAZORPAY_KEY_ID,
-      key_secret: process.env.RAZORPAY_KEY_SECRET
+      key_id: keyId,
+      key_secret: keySecret
     });
+    configuredKey = `${keyId}:${keySecret}`;
   }
   return razorpayClient;
 }
 
 export const paymentService = {
+  getPublicKeyId() {
+    getClient();
+    return configuredKey.split(':', 1)[0];
+  },
+
   createOrder({ amount, receipt, notes = {} }) {
     return getClient().orders.create({
       amount: Math.round(Number(amount) * 100),
@@ -30,7 +44,7 @@ export const paymentService = {
 
   verifySignature(orderId, paymentId, signature) {
     if (!orderId || !paymentId || !signature || !process.env.RAZORPAY_KEY_SECRET) return false;
-    const expected = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+    const expected = crypto.createHmac('sha256', String(process.env.RAZORPAY_KEY_SECRET).trim())
       .update(`${orderId}|${paymentId}`)
       .digest('hex');
     const received = Buffer.from(String(signature));

@@ -34,8 +34,36 @@ if (fs.existsSync(schemaPath)) {
 // table when necessary so the CHECK constraint matches the current schema.
 try {
   const bookingSql = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bookings'").get()?.sql || '';
-  if (!bookingSql.includes("'destination'")) {
+  const legacyBookingExists = Boolean(sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bookings_legacy'").get());
+  if (!bookingSql && legacyBookingExists) {
     sqlite.pragma('foreign_keys = OFF');
+    sqlite.exec(`
+      CREATE TABLE bookings (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+        provider_id TEXT REFERENCES users(id),
+        item_type TEXT NOT NULL CHECK(item_type IN ('product','service','package','homestay','guide','destination')),
+        item_id TEXT NOT NULL, item_title TEXT NOT NULL, travelers INTEGER DEFAULT 1,
+        check_in_date TEXT, check_out_date TEXT, days INTEGER DEFAULT 1,
+        total_amount REAL NOT NULL, escrow_amount REAL NOT NULL,
+        escrow_status TEXT NOT NULL CHECK(escrow_status IN ('locked','released','refunded')),
+        contract_address TEXT, contract_tx_hash TEXT,
+        status TEXT NOT NULL CHECK(status IN ('initiated','payment_pending','confirmed','in_progress','completed','cancelled','refunded')),
+        cancellation_reason TEXT, settled_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO bookings SELECT id,user_id,provider_id,item_type,item_id,item_title,travelers,
+        check_in_date,check_out_date,days,total_amount,escrow_amount,escrow_status,
+        contract_address,contract_tx_hash,status,cancellation_reason,settled_at,created_at,updated_at
+        FROM bookings_legacy;
+      DROP TABLE bookings_legacy;
+      CREATE INDEX IF NOT EXISTS idx_bookings_user ON bookings(user_id);
+      CREATE INDEX IF NOT EXISTS idx_bookings_provider ON bookings(provider_id);
+      CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
+    `);
+    sqlite.pragma('foreign_keys = ON');
+  } else if (bookingSql && !bookingSql.includes("'destination'")) {
+    sqlite.pragma('foreign_keys = OFF');
+    sqlite.exec('DROP INDEX IF EXISTS idx_bookings_user; DROP INDEX IF EXISTS idx_bookings_provider; DROP INDEX IF EXISTS idx_bookings_status;');
     sqlite.exec(`
       ALTER TABLE bookings RENAME TO bookings_legacy;
       CREATE TABLE bookings (
@@ -65,6 +93,63 @@ try {
 } catch (migrationError) {
   sqlite.pragma('foreign_keys = ON');
   console.warn('[Database] Booking migration skipped:', migrationError.message);
+}
+// Earlier booking migrations renamed the parent table before dependent tables
+// were rebuilt. Repair those foreign keys so payments can reference bookings.
+try {
+  const dependentTables = ['payments', 'refunds', 'reviews'];
+  const hasLegacyReferences = dependentTables.some((table) => {
+    const sql = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)?.sql || '';
+    return sql.includes('"bookings_legacy"');
+  });
+  if (hasLegacyReferences) {
+    sqlite.pragma('foreign_keys = OFF');
+    sqlite.exec(`
+      ALTER TABLE payments RENAME TO payments_legacy;
+      CREATE TABLE payments (
+        id TEXT PRIMARY KEY, booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id), gateway TEXT NOT NULL,
+        gateway_order_id TEXT, gateway_payment_id TEXT, gateway_signature TEXT,
+        amount REAL NOT NULL, currency TEXT DEFAULT 'INR',
+        status TEXT NOT NULL CHECK(status IN ('pending','successful','failed','refunded')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO payments SELECT id, booking_id, user_id, gateway, gateway_order_id, gateway_payment_id, gateway_signature, amount, currency, status, created_at FROM payments_legacy;
+      DROP TABLE payments_legacy;
+      ALTER TABLE refunds RENAME TO refunds_legacy;
+      CREATE TABLE refunds (
+        id TEXT PRIMARY KEY, payment_id TEXT NOT NULL REFERENCES payments(id),
+        booking_id TEXT NOT NULL REFERENCES bookings(id), amount REAL NOT NULL,
+        reason TEXT NOT NULL, gateway_refund_id TEXT,
+        status TEXT NOT NULL CHECK(status IN ('pending','processed','failed')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO refunds SELECT id, payment_id, booking_id, amount, reason, gateway_refund_id, status, created_at FROM refunds_legacy;
+      DROP TABLE refunds_legacy;
+      ALTER TABLE reviews RENAME TO reviews_legacy;
+      CREATE TABLE reviews (
+        id TEXT PRIMARY KEY, booking_id TEXT REFERENCES bookings(id),
+        user_id TEXT NOT NULL REFERENCES users(id), user_name TEXT NOT NULL,
+        target_type TEXT NOT NULL CHECK(target_type IN ('destination','provider','product','service')),
+        target_id TEXT NOT NULL, rating REAL NOT NULL CHECK(rating >= 1.0 AND rating <= 5.0),
+        review_text TEXT NOT NULL, sentiment TEXT NOT NULL CHECK(sentiment IN ('Positive','Neutral','Negative')),
+        compound_score REAL NOT NULL, emotion TEXT DEFAULT 'Neutral', aspects TEXT NOT NULL,
+        is_flagged INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO reviews SELECT id, booking_id, user_id, user_name, target_type, target_id, rating, review_text, sentiment, compound_score, emotion, aspects, is_flagged, created_at FROM reviews_legacy;
+      DROP TABLE reviews_legacy;
+      CREATE INDEX IF NOT EXISTS idx_payments_booking ON payments(booking_id);
+      CREATE INDEX IF NOT EXISTS idx_reviews_target ON reviews(target_type, target_id);
+      CREATE INDEX IF NOT EXISTS idx_reviews_sentiment ON reviews(sentiment);
+      DELETE FROM refunds WHERE booking_id NOT IN (SELECT id FROM bookings);
+      DELETE FROM reviews WHERE booking_id IS NOT NULL AND booking_id NOT IN (SELECT id FROM bookings);
+      DELETE FROM payments WHERE booking_id NOT IN (SELECT id FROM bookings);
+    `);
+    sqlite.pragma('foreign_keys = ON');
+  }
+} catch (dependentMigrationError) {
+  sqlite.pragma('foreign_keys = ON');
+  console.warn('[Database] Dependent booking migration skipped:', dependentMigrationError.message);
 }
 try { sqlite.exec('ALTER TABLE users ADD COLUMN profile_image TEXT'); } catch { /* column already exists */ }
 try { sqlite.exec("ALTER TABLE tourist_profiles ADD COLUMN nationality TEXT DEFAULT 'Indian'"); } catch { /* column already exists */ }

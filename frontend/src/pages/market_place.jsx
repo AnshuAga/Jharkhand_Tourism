@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../services/api";
+import { loadRazorpay } from "../services/razorpay";
 import { useAuth } from "../context/AuthContext";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -398,6 +399,7 @@ function ProductCard({
 
 export default function MarketPlace() {
   const { user, role } = useAuth();
+  const navigate = useNavigate();
   const canPurchase = role !== 'guide' && role !== 'vendor';
   const cartKey = `jharkhand_cart_${user?.id || user?.email || 'guest'}`;
   const location = useLocation();
@@ -481,19 +483,54 @@ export default function MarketPlace() {
     if (cart.length === 0) return;
     setCheckoutLoading(true);
     try {
+      const Razorpay = await loadRazorpay();
       const bookings = [];
-      for (const item of cart) {
-        const res = await api.marketplace.book({
+      const uniqueItems = Array.from(new Map(cart.map((item) => [item.id, item])).values());
+      for (const item of uniqueItems) {
+        const travelers = cart.filter((cartItem) => cartItem.id === item.id).length;
+        const res = await api.payments.createOrder({
           itemType: "product",
           itemId: item.id,
-          title: item.name,
-          totalAmount: item.price,
-          paymentGateway
+          travelers
         });
-        bookings.push({ booking: res.booking, payment: res.payment });
+        await new Promise((resolve, reject) => {
+           console.log("RAZORPAY ORDER RESPONSE:", res);
+           
+          const checkout = new Razorpay({
+            
+            key: res.keyId,
+            amount: res.order.amount,
+            currency: res.order.currency,
+            name: 'Jharkhand Tourism',
+            description: `${item.name}${travelers > 1 ? ` x ${travelers}` : ''}`,
+            order_id: res.order.id,
+            prefill: { name: user?.name || '', email: user?.email || '' },
+            theme: { color: '#fbbf24' },
+            method: {
+              card: true,
+              upi: true,
+              netbanking: true,
+              wallet: true
+            },
+            handler: async (response) => {
+              try {
+                const verified = await api.payments.verify(response);
+                bookings.push({ booking: verified.booking, payment: verified.payment });
+                resolve();
+              } catch (error) {
+                reject(error);
+              }
+            },
+            modal: { ondismiss: () => reject(new Error('Payment was cancelled.')) }
+          });
+          checkout.on('payment.failed', (event) => reject(new Error(event?.error?.description || event?.error?.reason || 'Razorpay test payment failed.')));
+          checkout.open();
+        });
       }
       setCheckoutSuccess({ bookings, booking: bookings[0].booking, payment: bookings[0].payment });
       setCart([]);
+      setIsCartOpen(false);
+      navigate('/tourist#bookings');
     } catch (err) {
       alert("Checkout error: " + err.message);
     } finally {
@@ -1026,7 +1063,7 @@ export default function MarketPlace() {
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-emerald-400">
                       <ShieldCheck size={14} />
-                      Protected via Ethereum Smart Contract Escrow
+                      Protected by the existing platform escrow flow
                     </div>
                   </div>
 
@@ -1040,9 +1077,9 @@ export default function MarketPlace() {
                       onChange={(event) => setPaymentGateway(event.target.value)}
                       className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-xs text-slate-200 outline-none focus:border-amber-400"
                     >
-                      <option value="escrow">Smart Contract Escrow (Blockchain)</option>
+                      <option value="razorpay">Razorpay test checkout</option>
                     </select>
-                    <p className="text-[10px] text-slate-500">Payment is recorded as successful and locked until the artisan confirms delivery.</p>
+                    <p className="text-[10px] text-slate-500">Sandbox payment only. Funds remain locked in platform escrow until delivery is confirmed.</p>
                   </div>
 
                   <button
@@ -1050,7 +1087,7 @@ export default function MarketPlace() {
                     disabled={checkoutLoading}
                     className="w-full py-3.5 rounded-xl bg-linear-to-r from-amber-400 to-amber-600 text-slate-950 font-bold text-xs uppercase tracking-wider hover:opacity-95 transition shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2"
                   >
-                    {checkoutLoading ? "Anchoring Smart Contract..." : "Confirm & Deposit to Escrow"}
+                    {checkoutLoading ? "Opening secure test checkout..." : "Pay securely with Razorpay test mode"}
                   </button>
                 </div>
               )}
