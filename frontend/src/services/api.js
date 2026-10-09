@@ -34,7 +34,14 @@ async function request(endpoint, options = {}) {
     }
   }
 
-  const data = await response.json().catch(() => ({ success: false, message: 'Invalid JSON response from server' }));
+  const responseText = await response.text();
+  let data;
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    const statusMessage = response.status ? ` (HTTP ${response.status})` : '';
+    throw new Error(`Server returned an invalid response${statusMessage}. Please restart the backend and try again.`);
+  }
   if (!response.ok) {
     throw new Error(data.message || `Request failed with status ${response.status}`);
   }
@@ -122,10 +129,13 @@ export const api = {
   },
   payments: {
     createOrder: (bookingData) => request('/payments/order', { method: 'POST', body: JSON.stringify(bookingData) }),
+    createBundleOrder: (bookingData) => request('/payments/bundle-order', { method: 'POST', body: JSON.stringify(bookingData) }),
     verify: (paymentData) => request('/payments/verify', { method: 'POST', body: JSON.stringify(paymentData) })
   },
   blockchain: {
-    verify: (certId) => request('/blockchain/verify', { method: 'POST', body: JSON.stringify({ certId }) }),
+    verify: (identifier) => request('/blockchain/verify', { method: 'POST', body: JSON.stringify({ certId: identifier }) }),
+    verifyCertificateId: (certificateId) => request(`/blockchain/verify/certificate/${encodeURIComponent(certificateId)}`),
+    verifyProvider: (providerId) => request(`/blockchain/verify/${encodeURIComponent(providerId)}`),
     getCertificates: () => request('/blockchain/certificates'),
     getLedger: () => request('/blockchain/ledger'),
     releaseEscrow: (bookingId) => request('/blockchain/escrow/release', { method: 'POST', body: JSON.stringify({ bookingId }) }),
@@ -162,6 +172,7 @@ export const api = {
     getVerifications: () => request('/admin/verifications'),
     approveKYC: (providerData) => request('/admin/kyc/approve', { method: 'POST', body: JSON.stringify(providerData) }),
     rejectKYC: (providerData) => request('/admin/kyc/reject', { method: 'POST', body: JSON.stringify(providerData) }),
+    revokeCertificate: (providerId) => request(`/admin/guides/${encodeURIComponent(providerId)}/revoke`, { method: 'POST' }),
     getBookings: () => request('/admin/bookings'),
     getPayments: () => request('/admin/payments')
   },

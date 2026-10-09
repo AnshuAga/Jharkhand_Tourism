@@ -164,8 +164,26 @@ export const adminController = {
   getVerifications(req, res) {
     try {
       const pending = db.verificationRequests.listPending();
-      const providers = db.providerProfiles.list({ limit: 50 });
-      const certificates = db.certificates.listValid();
+      const providers = db.providerProfiles.list({ limit: 50 }).map((provider) => {
+        const request = pending.find((item) => item.provider_id === provider.user_id) ||
+          db.verificationRequests.findByProviderId(provider.user_id)[0] || null;
+        const certificate = db.certificates.findByProviderId(provider.user_id);
+        return {
+          ...provider,
+          certificate_id: provider.certificate_id || certificate?.certificate_id || null,
+          blockchain_tx_hash: provider.blockchain_tx_hash || certificate?.blockchain_tx_hash || null,
+          block_number: provider.block_number || certificate?.block_number || null,
+          government_id: provider.government_id || request?.documents?.find((document) => /government|aadhar|aadhaar|identity|id/i.test(document.type || ''))?.fileName || null,
+          government_id_type: provider.government_id_type || request?.documents?.find((document) => /government|aadhar|aadhaar|identity|id/i.test(document.type || ''))?.type || null,
+          verification_request: request
+        };
+      });
+      const certificates = db.certificates.listValid().map((certificate) => ({
+        ...certificate,
+        certificate_id: certificate.certificate_id || certificate.id || null,
+        provider_id: certificate.provider_id || null,
+        blockchain_tx_hash: certificate.blockchain_tx_hash || certificate.tx_hash || null
+      }));
       res.json({ success: true, pendingCount: pending.length, pending, providers, certificates });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -180,7 +198,7 @@ export const adminController = {
       }
 
       if (requestId) {
-        db.verificationRequests.updateStatus(requestId, 'approved', notes || 'Approved by Admin', req.user.id);
+        // Mark the request approved only after the on-chain transaction confirms.
       }
 
       const result = await blockchainService.issueCertificate({
@@ -190,6 +208,9 @@ export const adminController = {
         district: district || 'Ranchi',
         issuer: 'Jharkhand Tourism Development Corporation'
       });
+      if (requestId) {
+        db.verificationRequests.updateStatus(requestId, 'approved', notes || 'Approved by Admin', req.user.id);
+      }
 
       res.status(201).json({
         success: true,
@@ -223,6 +244,16 @@ export const adminController = {
       });
 
       res.json({ success: true, message: 'Provider KYC marked as rejected.' });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  },
+
+  async revokeKYC(req, res) {
+    try {
+      const result = await blockchainService.revokeCertificate(req.params.providerId);
+      db.providerProfiles.updateStatus(req.params.providerId, 'revoked');
+      res.json({ success: true, message: 'Provider certificate revoked on Polygon Amoy.', ...result });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
     }

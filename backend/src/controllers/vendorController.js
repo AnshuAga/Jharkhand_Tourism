@@ -41,15 +41,21 @@ export const vendorController = {
           id: vendorId,
           name: user?.name,
           email: user?.email,
-          phone: user?.phone,
+          phone: user?.phone || '',
+          profileImage: user?.profile_image || '',
           role: user?.role,
           providerType: profile?.provider_type || user?.role,
           businessName: profile?.business_name || user?.name,
           district: profile?.district || 'Ranchi',
+          address: profile?.address || '',
+          state: profile?.state || 'Jharkhand',
+          serviceArea: profile?.service_area || 'Statewide',
           specialization: profile?.specialization || 'Tourism Services',
           languages: profile?.languages || [],
           licenseNumber: profile?.license_number || '',
           dailyRate: profile?.daily_rate || 0,
+          governmentId: profile?.government_id || '',
+          governmentIdType: profile?.government_id_type || '',
           kycStatus,
           verified: kycStatus === 'approved',
           rejectionReason: profile?.rejection_reason
@@ -86,6 +92,20 @@ export const vendorController = {
         return res.status(400).json({ success: false, message: 'Business name and district are required.' });
       }
 
+      const currentProfile = db.providerProfiles.findByUserId(vendorId);
+      const existingCertificate = db.certificates.findByProviderId(vendorId);
+      if (existingCertificate?.status === 'valid') {
+        if (currentProfile?.verification_status !== 'approved') {
+          db.providerProfiles.updateStatus(vendorId, 'approved');
+        }
+        return res.json({
+          success: true,
+          message: 'Your KYC is already approved. No new approval request was created.',
+          alreadyApproved: true,
+          certificate: existingCertificate
+        });
+      }
+
       // Upsert provider profile
       const providerType = req.user.role === 'guide' ? 'guide' : 'vendor';
       const allowedCategories = providerType === 'guide' ? ['guide'] : ['homestay', 'package', 'restaurant'];
@@ -98,12 +118,17 @@ export const vendorController = {
         business_name: businessName,
         license_number: licenseNumber || '',
         district: district,
+        address: currentProfile?.address || '',
+        state: currentProfile?.state || 'Jharkhand',
         service_area: 'Statewide',
+        languages: currentProfile?.languages || [],
         specialization: category || 'Tourism Service',
+        government_id: documents.find((document) => /government|aadhar|aadhaar|identity|id/i.test(document.type || ''))?.fileName || currentProfile?.government_id || '',
+        government_id_type: documents.find((document) => /government|aadhar|aadhaar|identity|id/i.test(document.type || ''))?.type || currentProfile?.government_id_type || licenseType,
         daily_rate: 0,
         verification_status: 'pending',
         rejection_reason: null,
-        payout_details: {}
+        payout_details: currentProfile?.payout_details || {}
       });
 
       // Submit verification request
@@ -130,10 +155,21 @@ export const vendorController = {
   updateProfile(req, res) {
     try {
       const vendorId = req.user.id;
-      const updated = db.providerProfiles.upsert({
-        user_id: vendorId,
-        ...req.body
-      });
+      const { governmentDocument, ...profileData } = req.body;
+      const updated = db.providerProfiles.upsert({ user_id: vendorId, ...profileData });
+      if (governmentDocument?.dataUrl) {
+        const existingRequest = db.verificationRequests.findByProviderId(vendorId)[0];
+        const existingDocuments = existingRequest?.documents || [];
+        const document = {
+          ...governmentDocument,
+          type: governmentDocument.type || 'Government ID',
+          uploadedAt: governmentDocument.uploadedAt || new Date().toISOString()
+        };
+        db.verificationRequests.updateLatestDocuments(vendorId, [
+          ...existingDocuments.filter((item) => !/government|aadhar|aadhaar|identity|id/i.test(item.type || '')),
+          document
+        ]);
+      }
       res.json({ success: true, message: 'Provider profile updated.', profile: updated });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });

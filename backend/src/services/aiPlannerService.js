@@ -28,10 +28,8 @@ const CITY_COORDINATES = {
 };
 
 function isServiceAvailable(service, tripDate, travelers) {
-  const availability = service?.availability;
-  if (!availability || availability.available === false) return false;
-  const maxGroupSize = Number(availability.maxGroupSize || availability.max_group_size);
-  if (Number.isFinite(maxGroupSize) && maxGroupSize > 0 && Number(travelers) > maxGroupSize) return false;
+  const availability = service?.availability || {};
+  if (availability?.available === false) return false;
   if (Array.isArray(availability.dates) && availability.dates.length > 0) {
     return availability.dates.map(String).includes(String(tripDate));
   }
@@ -42,7 +40,15 @@ function isServiceAvailable(service, tripDate, travelers) {
     const weekday = new Date(`${tripDate}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long' });
     return availability.days.includes(weekday);
   }
-  return false;
+  return true;
+}
+
+function normalizePlaceName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\bdham\b/g, 'dam')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }
 
 export const aiPlannerService = {
@@ -69,6 +75,8 @@ export const aiPlannerService = {
       requirements = '',
       adaptation = '',
       packageServiceId = '',
+      guideServiceIds = [],
+      hotelServiceIds = [],
       guideServiceId = '',
       hotelServiceId = ''
     } = preferences;
@@ -78,23 +86,52 @@ export const aiPlannerService = {
     const selectedPackage = packageServiceId
       ? availableServices.find((service) => service.id === packageServiceId && service.category === 'package')
       : null;
-    const selectedGuide = guideServiceId
-      ? availableServices.find((service) => service.id === guideServiceId && service.category === 'guide')
-      : null;
-    const selectedHotel = hotelServiceId
-      ? availableServices.find((service) => service.id === hotelServiceId && service.category === 'homestay')
-      : null;
-    for (const [label, id, service] of [
-      ['package', packageServiceId, selectedPackage],
-      ['guide', guideServiceId, selectedGuide],
-      ['accommodation', hotelServiceId, selectedHotel]
+    const selectedGuideIds = Array.isArray(guideServiceIds) ? guideServiceIds : [guideServiceId].filter(Boolean);
+    const selectedHotelIds = Array.isArray(hotelServiceIds) ? hotelServiceIds : [hotelServiceId].filter(Boolean);
+    const selectedGuides = selectedGuideIds.map((id) => availableServices.find((service) => service.id === id && service.category === 'guide')).filter(Boolean);
+    const selectedHotels = selectedHotelIds.map((id) => availableServices.find((service) => service.id === id && service.category === 'homestay')).filter(Boolean);
+    for (const [label, ids, services] of [
+      ['package', packageServiceId ? [packageServiceId] : [], selectedPackage ? [selectedPackage] : []],
+      ['guide', selectedGuideIds, selectedGuides],
+      ['accommodation', selectedHotelIds, selectedHotels]
     ]) {
-      if (id && (!service || !isServiceAvailable(service, preferences.tripDate, travelers))) {
+      if (ids.length !== services.length || services.some((service) => !isServiceAvailable(service, preferences.tripDate, travelers))) {
         throw new Error(`The selected ${label} is not available for the selected date or traveler count.`);
       }
     }
     const startCoord = CITY_COORDINATES[startCity] || CITY_COORDINATES.Ranchi;
-    const selectedNames = new Set(places.map((place) => String(place).toLowerCase()));
+    const destinationMatches = (value) => {
+      const normalizedValue = normalizePlaceName(value);
+      return allDestinations.find((destination) => {
+        const names = [destination.name, destination.title].map(normalizePlaceName).filter(Boolean);
+        return names.some((name) =>
+          name === normalizedValue ||
+          name.includes(normalizedValue) ||
+          normalizedValue.includes(name)
+        );
+      });
+    };
+    const mentionedPlaces = allDestinations.filter((destination) => {
+      const name = String(destination.name || destination.title);
+      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const firstNameToken = name.split(/\s+/)[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`\\b${escapedName}\\b`, 'i').test(String(requirements || ''))
+        || new RegExp(`\\b${firstNameToken}\\b`, 'i').test(String(requirements || ''));
+    });
+    const startDestination = destinationMatches(startCity);
+    const requestedDestinations = [
+      ...places.map(destinationMatches).filter(Boolean),
+      ...mentionedPlaces,
+      startDestination
+    ].filter(Boolean);
+    const selectedNames = new Set(requestedDestinations.flatMap((place) => [
+      normalizePlaceName(place.name),
+      normalizePlaceName(place.title)
+    ]).filter(Boolean));
+    const isRequested = (destination) => [
+      normalizePlaceName(destination.name),
+      normalizePlaceName(destination.title)
+    ].some((name) => selectedNames.has(name));
     const effectiveInterests = adaptation === 'nature'
       ? Array.from(new Set([...interests, 'nature']))
       : adaptation === 'wildlife'
@@ -127,7 +164,7 @@ export const aiPlannerService = {
       let finalScore = alpha * collaborativeScore + beta * contentScore;
 
       // Boost explicitly picked destinations if user handpicked some
-      if (selectedNames.has(String(dest.name).toLowerCase()) || selectedNames.has(String(dest.title).toLowerCase())) {
+      if (isRequested(dest)) {
         finalScore += 1.5;
       }
       if (adaptation === 'less-travel' && startCity && dest.district === startCity) finalScore += 0.5;
@@ -146,13 +183,10 @@ export const aiPlannerService = {
     scoredDestinations.sort((a, b) => b.hybridScore - a.hybridScore);
 
     // Shortlist enough candidates for the AI to combine nearby stops on one day
-    const requested = scoredDestinations.filter((dest) =>
-      selectedNames.has(String(dest.name).toLowerCase()) ||
-      selectedNames.has(String(dest.title).toLowerCase())
-    );
+    const requested = scoredDestinations.filter(isRequested);
     const ranked = scoredDestinations.filter((dest) => !requested.includes(dest));
     const candidateCount = Math.min(Math.max(Number(days) || 1, 1) * 2, scoredDestinations.length);
-    let shortlisted = [...requested, ...ranked].slice(0, candidateCount);
+    let shortlisted = [...requested, ...ranked].slice(0, Math.max(candidateCount, requested.length));
 
     // STEP 5: Itinerary Sequencing using TSP Greedy Nearest-Neighbor Heuristic
     const orderedDestinations = [];
@@ -191,6 +225,11 @@ export const aiPlannerService = {
       travelers: travelersCount,
       tripDate: preferences.tripDate
     });
+    const lastDestination = orderedDestinations[orderedDestinations.length - 1];
+    const returnDistanceKm = lastDestination
+      ? calculateDistance(lastDestination.lat, lastDestination.lng, startCoord.lat, startCoord.lng)
+      : 0;
+    const returnCost = Math.max(250, Math.round((returnDistanceKm * 14 + 250) * travelersCount));
     orderedDestinations.forEach((destination, index) => {
       const leg = transportPlan.intercity[index];
       if (leg) {
@@ -209,14 +248,13 @@ export const aiPlannerService = {
         ? calculateDistance(previous.lat, previous.lng, destination.lat, destination.lng)
         : 0;
       const canShareDay = currentGroup
-        && currentGroup.destinations.length < 2
         && interStopDistance <= 75
         && currentGroup.travelHours + destination.travelTimeHours + 3 <= 9;
 
       if (canShareDay) {
         currentGroup.destinations.push(destination);
         currentGroup.travelHours += destination.travelTimeHours + Math.max(0.5, interStopDistance / 45);
-      } else if (itineraryGroups.length < Number(days)) {
+      } else {
         itineraryGroups.push({
           destinations: [destination],
           travelHours: destination.travelTimeHours
@@ -227,6 +265,22 @@ export const aiPlannerService = {
     // STEP 6: Output Generation - Construct Structured Day-Wise Plan
     const totalBudget = Number(budget) || 25000;
     const dailyBudget = Math.round(totalBudget / days);
+    const dailyReturnLegs = itineraryGroups.map((group, index) => {
+      const dayStart = index === 0 ? startCity : itineraryGroups[index - 1].destinations.at(-1).name;
+      const dayEnd = group.destinations.at(-1).name;
+      if (selectedHotels.length || dayStart === dayEnd) return null;
+      const from = group.destinations.at(-1);
+      const to = index === 0 ? startCoord : itineraryGroups[index - 1].destinations.at(-1);
+      const distance = calculateDistance(from.lat, from.lng, to.lat, to.lng);
+      return {
+        day: index + 1,
+        from: dayEnd,
+        to: dayStart,
+        distanceKm: distance,
+        estimatedCost: Math.max(250, Math.round((distance * 14 + 250) * travelersCount))
+      };
+    }).filter(Boolean);
+    const dailyReturnCost = dailyReturnLegs.reduce((sum, leg) => sum + leg.estimatedCost, 0);
     const entryFeesKnown = orderedDestinations.every((dest) => /\d/.test(String(dest.ticket_info || '')));
     const estimatedEntryFees = orderedDestinations.reduce((sum, dest) => {
       const match = String(dest.ticket_info || '').match(/(?:₹|rs\.?|inr)\s*([\d,]+)/i);
@@ -236,17 +290,17 @@ export const aiPlannerService = {
       ? estimatedEntryFees
       : Math.round(totalBudget * 0.08);
     const remainingForEstimates = Math.max(0, totalBudget - entryFees);
-    const accommodationCost = selectedHotel
-      ? Number(selectedHotel.price || 0) * Math.max(1, Number(days) || 1)
+    const accommodationCost = selectedHotels.length
+      ? selectedHotels.reduce((sum, hotel) => sum + Number(hotel.price || 0), 0) * Math.max(1, Number(days) || 1)
       : Math.round(remainingForEstimates * 0.27);
-    const guideCost = selectedGuide
-      ? Number(selectedGuide.price || 0) * Math.max(1, Number(days) || 1)
+    const guideCost = selectedGuides.length
+      ? selectedGuides.reduce((sum, guide) => sum + Number(guide.price || 0), 0) * Math.max(1, Number(days) || 1)
       : 0;
     const packageCost = selectedPackage ? Number(selectedPackage.price || 0) : 0;
     const budgetBreakdown = {
       package: packageCost,
       guide: guideCost,
-      transportation: transportPlan.estimatedCosts.total,
+      transportation: transportPlan.estimatedCosts.total + returnCost + dailyReturnCost,
       accommodation: accommodationCost,
       food: Math.round(remainingForEstimates * 0.20),
       entryFees,
@@ -254,9 +308,10 @@ export const aiPlannerService = {
       parkingLocalTravel: 0,
       priceSources: {
         package: selectedPackage ? 'database' : 'not_selected',
-        guide: selectedGuide ? 'database' : 'not_selected',
-        accommodation: selectedHotel ? 'database' : 'estimated',
-        transportation: 'estimated'
+        guide: selectedGuides.length ? 'database' : 'not_selected',
+        accommodation: selectedHotels.length ? 'database' : 'estimated',
+        transportation: 'estimated',
+        returnToBase: 'estimated'
       }
     };
     const estimatedTotal = Object.values(budgetBreakdown)
@@ -267,6 +322,9 @@ export const aiPlannerService = {
       const dayNum = index + 1;
       const destinationsForDay = group.destinations;
       const primaryDestination = destinationsForDay[0];
+      const dayStart = index === 0 ? startCity : itineraryGroups[index - 1].destinations.at(-1).name;
+      const dayEnd = destinationsForDay.at(-1).name;
+      const returnLeg = dailyReturnLegs.find((leg) => leg.day === dayNum);
       const acts = destinationsForDay.flatMap((destination) => destination.activities || []);
       const dayDate = preferences.tripDate ? new Date(`${preferences.tripDate}T00:00:00`) : null;
       if (dayDate) dayDate.setDate(dayDate.getDate() + index);
@@ -281,6 +339,10 @@ export const aiPlannerService = {
         type: destinationsForDay.map((destination) => destination.category).filter(Boolean).join(' · '),
         district: Array.from(new Set(destinationsForDay.map((destination) => destination.district).filter(Boolean))).join(' · '),
         duration: dayNum === 1 ? 'Arrival & Scenic Exploration' : 'Full Day Expedition',
+        routePlan: `${dayStart} → ${destinationsForDay.map((destination) => destination.name).join(' → ')}${returnLeg ? ` → ${dayStart}` : ''}`,
+        overnight: returnLeg
+          ? { type: 'return_to_day_start', location: dayStart, transportCost: returnLeg.estimatedCost }
+          : { type: 'stay_at_destination', location: dayEnd, transportCost: 0 },
         activities: [
           ...acts.slice(0, 4),
           destinationsForDay.length > 1
@@ -292,28 +354,28 @@ export const aiPlannerService = {
         transport: transportLeg,
         travelDistanceKm: destinationsForDay.reduce((sum, destination) => sum + (Number(destination.travelDistanceKm) || 0), 0),
         estimatedTravelTime: `${Math.round(group.travelHours * 10) / 10} hrs transit`,
-        recommendedAccommodation: selectedHotel
-          ? selectedHotel.title
+        recommendedAccommodation: selectedHotels.length
+          ? selectedHotels.map((hotel) => hotel.title).join(', ')
           : 'No approved accommodation selected. Availability needs to be confirmed.',
-        accommodation: selectedHotel ? {
-          id: selectedHotel.id,
-          name: selectedHotel.title,
-          type: selectedHotel.category,
-          district: selectedHotel.district,
-          price: Number(selectedHotel.price || 0),
+        accommodation: selectedHotels.length ? selectedHotels.map((hotel) => ({
+          id: hotel.id,
+          name: hotel.title,
+          type: hotel.category,
+          district: hotel.district,
+          price: Number(hotel.price || 0),
           priceStatus: 'database',
           availabilityStatus: 'needs_confirmation',
-          amenities: selectedHotel.amenities || []
-        } : null,
-        guide: selectedGuide ? {
-          id: selectedGuide.id,
-          name: selectedGuide.title,
-          provider: selectedGuide.provider_name,
-          price: Number(selectedGuide.price || 0),
+          amenities: hotel.amenities || []
+        })) : [],
+        guide: selectedGuides.length ? selectedGuides.map((guide) => ({
+          id: guide.id,
+          name: guide.title,
+          provider: guide.provider_name,
+          price: Number(guide.price || 0),
           priceStatus: 'database',
           availabilityStatus: 'needs_confirmation',
-          description: selectedGuide.description
-        } : null,
+          description: guide.description
+        })) : [],
         weather: 'Weather information unavailable — check the forecast before travel.',
         food: food === 'No Preference' ? 'Local cuisine options near the destination — verify availability.' : `${food} meal options near the destination — verify availability.`,
         entryFees: destinationsForDay.map((destination) => `${destination.name}: ${destination.ticket_info || 'Price not available — verify before visiting.'}`).join(' | '),
@@ -328,7 +390,7 @@ export const aiPlannerService = {
       };
     });
 
-    const routeList = orderedDestinations.map(d => d.name);
+    const routeList = [startCity, ...orderedDestinations.map(d => d.name), startCity];
 
     return {
       success: true,
@@ -360,7 +422,7 @@ export const aiPlannerService = {
             activities: 'estimated',
               parkingLocalTravel: 'estimated',
               package: selectedPackage ? 'database' : 'not_selected',
-              guide: selectedGuide ? 'database' : 'not_selected'
+              guide: selectedGuides.length ? 'database' : 'not_selected'
           }
         },
         budgetStatus: estimatedTotal > totalBudget ? 'over_budget' : 'within_budget',
@@ -382,9 +444,18 @@ export const aiPlannerService = {
         description: selectedPackage.description,
         inclusions: selectedPackage.amenities || []
       } : null,
-      selectedGuide: selectedGuide || null,
-      selectedAccommodation: selectedHotel || null,
-      transportPlan,
+      selectedGuide: selectedGuides,
+      selectedAccommodation: selectedHotels,
+      transportPlan: {
+        ...transportPlan,
+        returnToBase: {
+          from: lastDestination?.name || startCity,
+          to: startCity,
+          distanceKm: returnDistanceKm,
+          estimatedCost: returnCost,
+          notes: `Return to base in ${startCity} after the final stop.`
+        }
+      },
       tspOptimized: true,
       algorithm: "Hybrid SVD-Collaborative + Cosine Content-Based + Greedy Nearest-Neighbor TSP",
       aiRecommendationRationale: [

@@ -2,12 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 import { CheckCircle2, Copy, ExternalLink, RefreshCw, Search, ShieldCheck, XCircle } from 'lucide-react';
 
-const explorerUrl = (hash) => hash ? `https://etherscan.io/tx/${encodeURIComponent(hash)}` : '';
+const explorerUrl = (hash) => hash ? `https://amoy.polygonscan.com/tx/${encodeURIComponent(hash)}` : '';
+const blockExplorerUrl = (block) => block ? `https://amoy.polygonscan.com/block/${encodeURIComponent(block)}` : '';
 const shorten = (value) => value ? `${value.slice(0, 10)}...${value.slice(-8)}` : '--';
 
 export default function CertificateVerification() {
   const [identifier, setIdentifier] = useState('');
-  const [mode, setMode] = useState('certificate');
+  const [mode, setMode] = useState('provider');
   const [result, setResult] = useState(null);
   const [ledger, setLedger] = useState([]);
   const [certificates, setCertificates] = useState([]);
@@ -41,7 +42,9 @@ export default function CertificateVerification() {
     setVerificationLoading(true);
     setResult(null);
     try {
-      const response = await api.blockchain.verify(identifier.trim());
+      const response = mode === 'provider'
+        ? await api.blockchain.verifyProvider(identifier.trim())
+        : await api.blockchain.verify(identifier.trim());
       setResult(response);
     } catch (err) {
       setResult({ status: 'Invalid', valid: false, message: err.message });
@@ -58,8 +61,8 @@ export default function CertificateVerification() {
   }), [ledger, filter, search]);
 
   const contractAddress = ledger.find((item) => item.contract_address)?.contract_address;
-  const verifiedCount = certificates.filter((certificate) => certificate.status === 'valid').length;
-  const copyHash = (hash) => navigator.clipboard?.writeText(hash);
+  const copyHash = (hash) => hash && navigator.clipboard?.writeText(hash);
+  const network = result?.network || ledger.find((item) => item.network)?.network || 'Polygon Amoy';
 
   return (
     <div className="min-h-screen bg-[#070b14] px-6 pb-24 pt-32 font-sans text-slate-100 md:px-16">
@@ -79,8 +82,7 @@ export default function CertificateVerification() {
           {[
             ['Smart contract', contractAddress ? 'Connected' : '--'],
             ['Total records', ledger.length || '--'],
-            ['Verified records', verifiedCount || '--'],
-            ['Network', '--']
+            ['Network', network]
           ].map(([label, value]) => (
             <div key={label} className="rounded-2xl border border-slate-800 bg-[#0b1326] p-5">
               <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">{label}</span>
@@ -101,18 +103,18 @@ export default function CertificateVerification() {
           <form onSubmit={handleVerify} className="mt-6 flex flex-col gap-3 md:flex-row">
             <div className="flex rounded-xl border border-slate-700 bg-slate-950 p-1 text-[10px] font-bold uppercase">
               {[
-                ['certificate', 'Certificate ID'],
+                ['provider', 'Provider ID'],
                 ['transaction', 'Transaction Hash']
               ].map(([value, label]) => <button key={value} type="button" onClick={() => setMode(value)} className={`rounded-lg px-3 py-2 ${mode === value ? 'bg-amber-400 text-slate-950' : 'text-slate-400'}`}>{label}</button>)}
             </div>
-            <input required value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder={mode === 'certificate' ? 'e.g. JH-GUIDE-108' : '0x transaction hash'} className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-white outline-none focus:border-amber-400" />
+            <input required value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder={mode === 'provider' ? 'e.g. usr-guide-161da569' : '0x transaction hash'} className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 font-mono text-sm text-white outline-none focus:border-amber-400" />
             <button disabled={verificationLoading} className="rounded-xl bg-amber-400 px-5 py-3 text-xs font-bold uppercase tracking-wider text-slate-950 hover:bg-amber-300 disabled:opacity-50">{verificationLoading ? 'Verifying...' : 'Verify on blockchain'}</button>
           </form>
           {result && (
             <div className={`mt-5 rounded-2xl border p-5 ${result.valid ? 'border-emerald-800 bg-emerald-950/20' : 'border-red-800 bg-red-950/20'}`}>
-              <div className="flex items-center gap-2 text-sm font-bold">{result.valid ? <CheckCircle2 className="text-emerald-400" /> : <XCircle className="text-red-400" />}{result.valid ? 'Verified on blockchain' : 'Verification failed'}</div>
-              <p className="mt-2 text-sm text-slate-300">{result.valid ? `${result.name} · ${result.category} · ${result.district}` : (result.message || 'The supplied identifier could not be matched to a blockchain record.')}</p>
-              {result.valid && <div className="mt-3 grid gap-2 text-xs text-slate-400 md:grid-cols-3"><span>Certificate: <b className="text-white">{result.id}</b></span><span>Status: <b className="text-emerald-300">{result.status}</b></span><span>Registered: <b className="text-white">{result.date || '--'}</b></span><span>Transaction: <b className="font-mono text-white">{shorten(result.blockchainTxHash)}</b></span><span>Block: <b className="text-white">{result.blockNumber || '--'}</b></span></div>}
+              <div className="flex items-center gap-2 text-sm font-bold">{result.valid ? <CheckCircle2 className="text-emerald-400" /> : <XCircle className="text-red-400" />}{result.valid ? (mode === 'provider' ? 'Verified on blockchain' : 'Verified transaction') : 'Verification failed'}</div>
+              <p className="mt-2 text-sm text-slate-300">{result.valid ? `${result.certificate?.name || result.providerId} · ${result.certificate?.category || 'Provider'} · ${result.certificate?.district || '--'}` : (result.message || 'The supplied identifier could not be matched to a blockchain record.')}</p>
+              {result.valid && <div className="mt-3 grid gap-2 text-xs text-slate-400 md:grid-cols-3"><span>Provider: <b className="text-white">{result.providerId}</b></span><span>Status: <b className="text-emerald-300">{result.status}</b></span><span>Issued: <b className="text-white">{result.issuedAt || result.certificate?.issue_date ? new Date(result.issuedAt || result.certificate.issue_date).toLocaleDateString() : '--'}</b></span><span>Transaction: <b className="font-mono text-white">{shorten(result.transactionHash || result.certificate?.blockchain_tx_hash)}</b></span><span>Valid until: <b className="text-white">{result.validUntil || result.certificate?.valid_until ? new Date(result.validUntil || result.certificate.valid_until).toLocaleDateString() : '--'}</b></span></div>}
             </div>
           )}
         </section>
@@ -125,7 +127,7 @@ export default function CertificateVerification() {
           <div className="mt-6 flex flex-col gap-3 md:flex-row"><div className="relative flex-1"><Search size={15} className="absolute left-3 top-3 text-slate-500" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search hash, certificate ID or wallet address" className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-xs text-white outline-none focus:border-emerald-400" /></div><select value={filter} onChange={(event) => setFilter(event.target.value)} className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"><option>All</option><option>Bookings</option><option>Escrow</option><option>Refunds</option><option>Certificates</option></select></div>
           {error && <p className="mt-5 rounded-xl border border-red-800 bg-red-950/30 p-4 text-sm text-red-300">{error}</p>}
           {!ledgerLoading && !filteredLedger.length && <div className="mt-5 rounded-2xl border border-dashed border-slate-700 p-8 text-center"><p className="text-sm text-slate-300">No blockchain transactions have been recorded yet.</p><p className="mt-1 text-xs text-slate-500">Transactions will appear here after a successful blockchain operation.</p></div>}
-          <div className="mt-5 space-y-3">{filteredLedger.map((transaction) => <article key={transaction.id || transaction.tx_hash} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><span className="rounded-full bg-emerald-500/15 px-2 py-1 text-[10px] font-bold uppercase text-emerald-300">{transaction.action || 'Transaction'}</span><p className="mt-2 font-mono text-xs text-slate-300">{shorten(transaction.tx_hash)}</p></div><div className="flex items-center gap-3 text-xs"><span className="text-emerald-300">{transaction.status || 'confirmed'}</span><span className="text-slate-500">Block {transaction.block_number || '--'}</span><button type="button" onClick={() => copyHash(transaction.tx_hash)} title="Copy hash" className="text-slate-400 hover:text-white"><Copy size={14} /></button>{transaction.tx_hash && <a href={explorerUrl(transaction.tx_hash)} target="_blank" rel="noreferrer" className="text-amber-300 hover:text-amber-200"><ExternalLink size={14} /></a>}</div></div></article>)}</div>
+          <div className="mt-5 space-y-3">{filteredLedger.map((transaction) => <article key={transaction.id || transaction.tx_hash} className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><span className="rounded-full bg-emerald-500/15 px-2 py-1 text-[10px] font-bold uppercase text-emerald-300">{transaction.action || 'Transaction'}</span><p className="mt-2 font-mono text-xs text-slate-300">{shorten(transaction.tx_hash)}</p></div><div className="flex flex-wrap items-center gap-3 text-xs"><span className="text-emerald-300">{transaction.status || 'confirmed'}</span>{transaction.block_number ? <a href={blockExplorerUrl(transaction.block_number)} target="_blank" rel="noreferrer" className="text-slate-500 hover:text-amber-300">Block {transaction.block_number}</a> : <span className="text-slate-500">Block --</span>}<button type="button" onClick={() => copyHash(transaction.tx_hash)} title="Copy transaction hash" aria-label="Copy transaction hash" className="text-slate-400 hover:text-white"><Copy size={14} /></button>{transaction.tx_hash && <a href={explorerUrl(transaction.tx_hash)} target="_blank" rel="noreferrer" title="Open transaction on Polygon Amoy" className="text-amber-300 hover:text-amber-200"><ExternalLink size={14} /></a>}</div></div></article>)}</div>
         </section>
 
         <section className="rounded-3xl border border-slate-800 bg-[#0b1326] p-6 md:p-8">

@@ -30,6 +30,14 @@ if (fs.existsSync(schemaPath)) {
   const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
   sqlite.exec(schemaSql);
 }
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS booking_bundle_items (
+    booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+    service_id TEXT NOT NULL REFERENCES services(id),
+    quantity INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (booking_id, service_id)
+  )
+`);
 // Older installations predate destination bookings. Rebuild the small bookings
 // table when necessary so the CHECK constraint matches the current schema.
 try {
@@ -156,6 +164,8 @@ try { sqlite.exec("ALTER TABLE tourist_profiles ADD COLUMN nationality TEXT DEFA
 try { sqlite.exec('ALTER TABLE tourist_profiles ADD COLUMN state TEXT'); } catch { /* column already exists */ }
 try { sqlite.exec('ALTER TABLE provider_profiles ADD COLUMN address TEXT'); } catch { /* column already exists */ }
 try { sqlite.exec('ALTER TABLE provider_profiles ADD COLUMN state TEXT'); } catch { /* column already exists */ }
+try { sqlite.exec('ALTER TABLE provider_profiles ADD COLUMN government_id TEXT'); } catch { /* column already exists */ }
+try { sqlite.exec('ALTER TABLE provider_profiles ADD COLUMN government_id_type TEXT'); } catch { /* column already exists */ }
 try { sqlite.exec("ALTER TABLE tourist_profiles ADD COLUMN country_of_residence TEXT DEFAULT 'India'"); } catch { /* column already exists */ }
 try { sqlite.exec('ALTER TABLE tourist_profiles ADD COLUMN date_of_birth TEXT'); } catch { /* column already exists */ }
 try { sqlite.exec("ALTER TABLE tourist_profiles ADD COLUMN preferred_language TEXT DEFAULT 'English'"); } catch { /* column already exists */ }
@@ -333,9 +343,28 @@ export const db = {
       };
     },
     upsert: (profile) => {
+      const existing = db.providerProfiles.findByUserId(profile.user_id);
+      const normalizedProfile = {
+        user_id: profile.user_id,
+        provider_type: profile.provider_type || existing?.provider_type || 'vendor',
+        business_name: profile.business_name || existing?.business_name || profile.name || 'Tourism Provider',
+        license_number: profile.license_number ?? existing?.license_number ?? '',
+        district: profile.district || existing?.district || 'Ranchi',
+        address: profile.address ?? existing?.address ?? null,
+        state: profile.state ?? existing?.state ?? 'Jharkhand',
+        service_area: profile.service_area ?? existing?.service_area ?? 'Statewide',
+        specialization: profile.specialization ?? existing?.specialization ?? 'Tourism Services',
+        languages: profile.languages ?? existing?.languages ?? [],
+        daily_rate: profile.daily_rate ?? existing?.daily_rate ?? 0,
+        verification_status: profile.verification_status || existing?.verification_status || 'pending',
+        rejection_reason: profile.rejection_reason ?? existing?.rejection_reason ?? null,
+        payout_details: profile.payout_details ?? existing?.payout_details ?? {}
+        ,government_id: profile.government_id ?? existing?.government_id ?? ''
+        ,government_id_type: profile.government_id_type ?? existing?.government_id_type ?? ''
+      };
       sqlite.prepare(`
-        INSERT INTO provider_profiles (user_id, provider_type, business_name, license_number, district, address, state, service_area, specialization, languages, daily_rate, verification_status, rejection_reason, payout_details, updated_at)
-        VALUES (@user_id, @provider_type, @business_name, @license_number, @district, @address, @state, @service_area, @specialization, @languages, @daily_rate, @verification_status, @rejection_reason, @payout_details, CURRENT_TIMESTAMP)
+        INSERT INTO provider_profiles (user_id, provider_type, business_name, license_number, district, address, state, service_area, specialization, languages, daily_rate, verification_status, rejection_reason, payout_details, government_id, government_id_type, updated_at)
+        VALUES (@user_id, @provider_type, @business_name, @license_number, @district, @address, @state, @service_area, @specialization, @languages, @daily_rate, @verification_status, @rejection_reason, @payout_details, @government_id, @government_id_type, CURRENT_TIMESTAMP)
         ON CONFLICT(user_id) DO UPDATE SET
           provider_type = excluded.provider_type,
           business_name = excluded.business_name,
@@ -350,11 +379,13 @@ export const db = {
           verification_status = excluded.verification_status,
           rejection_reason = excluded.rejection_reason,
           payout_details = excluded.payout_details,
+          government_id = excluded.government_id,
+          government_id_type = excluded.government_id_type,
           updated_at = CURRENT_TIMESTAMP
       `).run({
-        ...profile,
-        languages: typeof profile.languages === 'object' ? JSON.stringify(profile.languages) : profile.languages,
-        payout_details: typeof profile.payout_details === 'object' ? JSON.stringify(profile.payout_details) : profile.payout_details
+        ...normalizedProfile,
+        languages: typeof normalizedProfile.languages === 'object' ? JSON.stringify(normalizedProfile.languages) : normalizedProfile.languages,
+        payout_details: typeof normalizedProfile.payout_details === 'object' ? JSON.stringify(normalizedProfile.payout_details) : normalizedProfile.payout_details
       });
       return db.providerProfiles.findByUserId(profile.user_id);
     },
@@ -364,9 +395,16 @@ export const db = {
     },
     list: ({ status, district, limit = 50 } = {}) => {
       let query = `
-        SELECT p.*, u.name, u.email, u.phone
+        SELECT p.*, u.name, u.email, u.phone,
+          c.certificate_id, c.blockchain_tx_hash, c.block_number
         FROM provider_profiles p
         JOIN users u ON p.user_id = u.id
+        LEFT JOIN certificates c ON c.id = (
+          SELECT latest.id FROM certificates latest
+          WHERE latest.provider_id = p.user_id
+          ORDER BY latest.created_at DESC
+          LIMIT 1
+        )
         WHERE 1=1
       `;
       const params = [];
@@ -409,6 +447,13 @@ export const db = {
       const rows = sqlite.prepare('SELECT * FROM verification_requests WHERE provider_id = ? ORDER BY submitted_at DESC').all(providerId);
       return rows.map(r => ({ ...r, documents: safeJSONParse(r.documents, []) }));
     },
+    updateLatestDocuments: (providerId, documents) => {
+      const latest = sqlite.prepare('SELECT id FROM verification_requests WHERE provider_id = ? ORDER BY submitted_at DESC LIMIT 1').get(providerId);
+      if (!latest) return null;
+      sqlite.prepare('UPDATE verification_requests SET documents = ?, submitted_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(JSON.stringify(documents), latest.id);
+      return db.verificationRequests.findById(latest.id);
+    },
     reserveAvailability: (id, quantity = 1) => {
       const service = db.services.findById(id);
       const availableRooms = Number(service?.availability?.availableRooms);
@@ -449,6 +494,21 @@ export const db = {
     },
     findByCertificateId: (certId) => sqlite.prepare('SELECT * FROM certificates WHERE certificate_id = ?').get(certId),
     findByProviderId: (providerId) => sqlite.prepare('SELECT * FROM certificates WHERE provider_id = ? ORDER BY created_at DESC LIMIT 1').get(providerId),
+    updateBlockchainRecord: (cert) => {
+      sqlite.prepare(`
+        UPDATE certificates
+        SET name = @name, category = @category, district = @district, issue_date = @issue_date,
+            valid_until = @valid_until, issuer = @issuer, sha256_hash = @sha256_hash,
+            blockchain_tx_hash = @blockchain_tx_hash, block_number = @block_number,
+            status = @status, qr_code_url = @qr_code_url
+        WHERE id = @id
+      `).run(cert);
+      return db.certificates.findByCertificateId(cert.certificate_id);
+    },
+    markRevoked: (providerId) => {
+      sqlite.prepare("UPDATE certificates SET status = 'revoked' WHERE provider_id = ? AND status = 'valid'").run(providerId);
+      return db.certificates.findByProviderId(providerId);
+    },
     findByHashOrId: (term) => {
       return sqlite.prepare(`
         SELECT * FROM certificates
@@ -678,10 +738,13 @@ export const db = {
   services: {
     list: ({ category, district } = {}) => {
       let query = `
-        SELECT s.*, u.name as provider_name, p.verification_status as provider_verified, p.rating as provider_rating
+        SELECT s.*, u.name as provider_name, p.verification_status as provider_verified, p.rating as provider_rating,
+          c.certificate_id, c.blockchain_tx_hash, c.block_number, c.valid_until as certificate_valid_until,
+          p.service_area
         FROM services s
         JOIN users u ON s.provider_id = u.id
         LEFT JOIN provider_profiles p ON s.provider_id = p.user_id
+        LEFT JOIN certificates c ON c.provider_id = s.provider_id AND c.status = 'valid'
         WHERE s.is_active = 1
           AND u.is_active = 1
           AND s.approval_status = 'approved'

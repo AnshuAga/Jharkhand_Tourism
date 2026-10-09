@@ -1,4 +1,5 @@
 import React, { Component, useMemo, useState, useEffect } from "react";
+import QRCode from "qrcode";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import { api } from "../services/api";
 import { loadRazorpay } from "../services/razorpay";
@@ -292,10 +293,8 @@ function transportCheckUrl(mode, from, to) {
 }
 
 function isServiceAvailable(service, tripDate, travelers) {
-  const availability = service?.availability;
-  if (!availability || availability.available === false) return false;
-  const maxGroupSize = Number(availability.maxGroupSize || availability.max_group_size);
-  if (Number.isFinite(maxGroupSize) && maxGroupSize > 0 && Number(travelers) > maxGroupSize) return false;
+  const availability = service?.availability || {};
+  if (availability?.available === false) return false;
 
   const dates = Array.isArray(availability.dates) ? availability.dates.map(String) : [];
   if (dates.length > 0) return dates.includes(String(tripDate));
@@ -311,7 +310,7 @@ function isServiceAvailable(service, tripDate, travelers) {
     return availability.days.includes(weekday);
   }
 
-  return false;
+  return true;
 }
 
 function buildCostEstimate(budget, travelers, days) {
@@ -389,10 +388,12 @@ export default function AIPlanner() {
   const [bookingSuccess, setBookingSuccess] = useState(null);
   const [bookingError, setBookingError] = useState('');
   const [serviceOptions, setServiceOptions] = useState([]);
+  const [serviceQrCodes, setServiceQrCodes] = useState({});
   const [weatherByPlace, setWeatherByPlace] = useState({});
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [verifiedFares, setVerifiedFares] = useState({});
   const [checklist, setChecklist] = useState({});
+  const [requiredPlaces, setRequiredPlaces] = useState([]);
 
   const [form, setForm] = useState({
     days: 4,
@@ -413,8 +414,8 @@ export default function AIPlanner() {
     pace: "Balanced",
     requirements: "",
     packageServiceId: "",
-    guideServiceId: "",
-    hotelServiceId: "",
+    guideServiceIds: [],
+    hotelServiceIds: [],
   });
 
   useEffect(() => {
@@ -429,6 +430,21 @@ export default function AIPlanner() {
     }).catch(console.warn);
     api.marketplace.getData().then((res) => setServiceOptions(res.services || [])).catch(console.warn);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const createQrCodes = async () => {
+      const entries = await Promise.all(serviceOptions
+        .filter((service) => service.provider_id && service.certificate_id)
+        .map(async (service) => [
+          service.id,
+          await QRCode.toDataURL(`${window.location.origin}/verify/guide/${encodeURIComponent(service.provider_id)}`, { width: 120, margin: 1 })
+        ]));
+      if (!cancelled) setServiceQrCodes(Object.fromEntries(entries));
+    };
+    createQrCodes().catch(console.warn);
+    return () => { cancelled = true; };
+  }, [serviceOptions]);
 
   useEffect(() => {
     const plannerPreferences = location.state?.plannerPreferences;
@@ -457,6 +473,7 @@ export default function AIPlanner() {
     }
     if (location.state?.prefilledDestination) {
       const pre = location.state.prefilledDestination;
+      setRequiredPlaces((previous) => Array.from(new Set([...previous, pre])));
       setForm((prev) => ({
         ...prev,
         places: prev.places.includes(pre) ? prev.places : [...prev.places, pre],
@@ -488,9 +505,9 @@ export default function AIPlanner() {
     setAvailablePlaces(ranked);
     setForm((previous) => ({
       ...previous,
-      places: previous.places.filter((place) => ranked.includes(place)),
+      places: Array.from(new Set([...requiredPlaces, ...previous.places])),
     }));
-  }, [destinationRecords, form.startCity]);
+  }, [destinationRecords, form.startCity, requiredPlaces]);
 
   const updateForm = (key, value) => {
     setForm((previous) => ({
@@ -733,8 +750,8 @@ export default function AIPlanner() {
       pace: "Balanced",
       requirements: "",
       packageServiceId: "",
-      guideServiceId: "",
-      hotelServiceId: "",
+      guideServiceIds: [],
+      hotelServiceIds: [],
     });
   };
 
@@ -750,24 +767,20 @@ export default function AIPlanner() {
       const Razorpay = await loadRazorpay();
       const routeText = itinerary?.route?.join(' ➔ ') || 'Jharkhand Circuit';
       const title = `${form.days}-Day ${form.style} Expedition (${routeText})`;
-      const bookings = [];
       const selectedIds = [
         form.packageServiceId,
-        form.guideServiceId,
-        form.hotelServiceId
+        ...form.guideServiceIds,
+        ...form.hotelServiceIds
       ].filter(Boolean);
-      for (const serviceId of selectedIds) {
-        const service = serviceOptions.find((option) => option.id === serviceId);
-        if (!service) throw new Error('One of the selected services is no longer available.');
-        const serviceBooking = await api.payments.createOrder({
-          itemType: service.category,
-          itemId: service.id,
-          travelers: form.travelers,
-          days: service.category === 'package' ? form.days : (service.duration_days || 1),
-          checkInDate: form.tripDate,
-          checkOutDate: addDays(form.tripDate, service.category === 'package' ? form.days : (service.duration_days || 1))
-        });
-        const verified = await new Promise((resolve, reject) => {
+      if (!selectedIds.length) throw new Error('Select a guide, hotel, or package before booking.');
+      const serviceBooking = await api.payments.createBundleOrder({
+        items: selectedIds.map((serviceId) => ({ serviceId })),
+        travelers: form.travelers,
+        days: form.days,
+        checkInDate: form.tripDate,
+        checkOutDate: addDays(form.tripDate, form.days)
+      });
+      const verified = await new Promise((resolve, reject) => {
           const checkout = new Razorpay({
             key: serviceBooking.keyId,
             amount: serviceBooking.order.amount,
@@ -794,16 +807,9 @@ export default function AIPlanner() {
           });
           checkout.on('payment.failed', (event) => reject(new Error(event?.error?.description || event?.error?.reason || 'Razorpay test payment failed.')));
           checkout.open();
-        });
-        bookings.push(verified.booking);
-      }
-
-      if (bookings.length > 0) {
-        setBookingSuccess({ ...bookings[0], relatedBookings: bookings.slice(1) });
-        navigate('/tourist#bookings');
-      } else {
-        throw new Error('Select a package, guide, or accommodation before booking.');
-      }
+      });
+      setBookingSuccess(verified.booking);
+      navigate('/tourist#bookings');
     } catch (err) {
       setBookingError(err.message || 'Unable to complete Razorpay test payment.');
     } finally {
@@ -1190,13 +1196,24 @@ export default function AIPlanner() {
                           className={`rounded-xl border p-4 text-left ${form.packageServiceId === service.id ? 'border-amber-400 bg-amber-400/10' : 'border-slate-800 bg-slate-950/60'}`}
                         >
                           <div className="flex justify-between gap-3">
-                            <strong className="text-white">{service.title}</strong>
+                            <strong className="flex items-center gap-1.5 text-white"><BadgeCheck size={15} className="text-emerald-400" />{service.title}</strong>
                             <span className="text-xs text-amber-300">₹{Number(service.price || 0).toLocaleString('en-IN')}</span>
                           </div>
                           <p className="mt-2 text-xs text-slate-400">{service.description || 'Package details available from the certified provider.'}</p>
                           <div className="mt-3 flex flex-wrap gap-1">
                             {(service.amenities || []).map((amenity) => <span key={amenity} className="rounded-md border border-slate-800 bg-slate-950 px-1.5 py-0.5 text-[9px] text-slate-300">{amenity}</span>)}
                           </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] text-slate-400">
+                            <span>Provider: {service.provider_name || 'Approved provider'}</span>
+                            <span>District: {service.district || 'Jharkhand'}</span>
+                            <span>Duration: {service.duration_days || 1} day(s)</span>
+                            <span>Certificate: {service.certificate_id || 'Verified provider'}</span>
+                          </div>
+                          {service.certificate_id && <div className="mt-3 flex items-center gap-3 border-t border-slate-800 pt-3">
+                            {serviceQrCodes[service.id] && <img src={serviceQrCodes[service.id]} alt="Package verification QR code" className="h-16 w-16 rounded bg-white p-1" />}
+                            <a href={`/verify/guide/${encodeURIComponent(service.provider_id)}`} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} className="text-[10px] font-bold text-emerald-300 underline">Verify certificate</a>
+                            {service.blockchain_tx_hash && <a href={`https://amoy.polygonscan.com/tx/${encodeURIComponent(service.blockchain_tx_hash)}`} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} className="text-[10px] font-bold text-amber-300 underline">View on Polygon Explorer</a>}
+                          </div>}
                           <p className="mt-2 text-[10px] text-slate-500">
                             {service.duration_days || 1} day{service.duration_days === 1 ? '' : 's'} · {Object.entries(service.availability || {}).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`).join(' · ') || 'Availability on request'}
                           </p>
@@ -1210,14 +1227,22 @@ export default function AIPlanner() {
                   </div>
                 )}
                 {[
-                  { category: 'guide', label: 'Available guides', field: 'guideServiceId', empty: 'No guide selected' },
-                  { category: 'homestay', label: 'Available hotels and homestays', field: 'hotelServiceId', empty: 'No hotel selected' }
+                  { category: 'guide', label: 'Available guides', field: 'guideServiceIds', empty: 'No guide selected' },
+                  { category: 'homestay', label: 'Available hotels and homestays', field: 'hotelServiceIds', empty: 'No hotel selected' }
                 ].map(({ category, label, field, empty }) => {
                   const selectedPackage = serviceOptions.find((service) => service.id === form.packageServiceId);
                   const includedIds = selectedPackage?.includedServiceIds || selectedPackage?.included_service_ids || [];
+                  const targetDistricts = destinationRecords
+                    .filter((destination) => form.places.includes(destination.name))
+                    .map((destination) => String(destination.district || '').toLowerCase());
                   const services = serviceOptions.filter((service) =>
                     service.category === category &&
                     isServiceAvailable(service, form.tripDate, form.travelers) &&
+                    (!targetDistricts.length ||
+                      !service.service_area ||
+                      /statewide|all jharkhand|all districts/i.test(service.service_area) ||
+                      targetDistricts.includes(String(service.district || '').toLowerCase()) ||
+                      targetDistricts.some((district) => String(service.service_area).toLowerCase().includes(district))) &&
                     (!selectedPackage || includedIds.length === 0 || includedIds.includes(service.id))
                   );
                   return (
@@ -1228,13 +1253,12 @@ export default function AIPlanner() {
                       </div>
                       {services.length === 0 ? (
                         <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 text-xs text-slate-500">
-                          No {category === 'guide' ? 'guides' : 'hotels'} are included in this package.
-                          <a className="ml-2 text-amber-300 underline" target="_blank" rel="noopener noreferrer" href={`https://www.google.com/maps/search/${encodeURIComponent(`${category === 'guide' ? 'guides' : 'hotels'} near ${form.places[0] || form.startCity}`)}`}>Check nearby</a>
+                          No approved {category === 'guide' ? 'guides' : 'hotels'} are available for the selected date and traveler count.
                         </div>
                       ) : (
                         <div className="grid gap-4 md:grid-cols-2">
                           {services.map((service) => {
-                            const selected = form[field] === service.id;
+                            const selected = form[field].some((id) => String(id) === String(service.id));
                             const verified = service.approval_status === 'approved' && (
                               service.provider_verified === 'approved' ||
                               service.provider_verified === 'verified' ||
@@ -1245,13 +1269,15 @@ export default function AIPlanner() {
                               <button
                                 key={service.id}
                                 type="button"
-                                onClick={() => updateForm(field, selected ? '' : service.id)}
+                                onClick={() => updateForm(field, selected
+                                  ? form[field].filter((id) => String(id) !== String(service.id))
+                                  : [...form[field], service.id])}
                                 className={`overflow-hidden rounded-xl border text-left transition ${selected ? 'border-amber-400 shadow-lg shadow-amber-400/10' : 'border-slate-800 hover:border-slate-600'} bg-[#070b14]`}
                               >
                                 <div className="relative h-28">
                                   <img src={resolveServiceImage(service)} alt={service.title} className="h-full w-full object-cover" />
                                   <div className="absolute inset-0 bg-linear-to-t from-black/80 to-transparent" />
-                                  {verified && <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/90 px-2 py-0.5 text-[9px] font-bold text-slate-950"><BadgeCheck size={11} /> Verified</span>}
+                                  {verified && <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-emerald-500/90 px-2 py-0.5 text-[9px] font-bold text-slate-950"><BadgeCheck size={11} /> Approved</span>}
                                   {selected && <span className="absolute bottom-2 left-2 rounded-full bg-amber-400 px-2 py-0.5 text-[9px] font-bold text-slate-950">Selected</span>}
                                 </div>
                                 <div className="space-y-2.5 p-3.5">
@@ -1261,6 +1287,16 @@ export default function AIPlanner() {
                                   </div>
                                   <p className="text-[11px] leading-relaxed text-slate-400 line-clamp-2">{service.description}</p>
                                   <div className="flex flex-wrap gap-1">{(service.amenities || []).map((amenity) => <span key={amenity} className="rounded-md border border-slate-800 bg-slate-950 px-1.5 py-0.5 text-[9px] text-slate-300">{amenity}</span>)}</div>
+                                  <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-400">
+                                    <span>Provider: {service.provider_name || 'Approved provider'}</span>
+                                    <span>District: {service.district || 'Jharkhand'}</span>
+                                    <span>Certificate: {service.certificate_id || 'Verified provider'}</span>
+                                    <span>Valid until: {service.certificate_valid_until || 'Active'}</span>
+                                  </div>
+                                  {service.certificate_id && <div className="flex items-center gap-3 border-t border-slate-800 pt-2">
+                                    {serviceQrCodes[service.id] && <img src={serviceQrCodes[service.id]} alt={`${service.title} verification QR code`} className="h-16 w-16 rounded bg-white p-1" />}
+                                    <a href={`/verify/guide/${encodeURIComponent(service.provider_id)}`} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()} className="text-[10px] font-bold text-emerald-300 underline">Verify approved certificate</a>
+                                  </div>}
                                   <div className="flex items-center justify-between border-t border-slate-800 pt-2 text-[9px] text-slate-500"><span>{service.duration_days || 1} day{service.duration_days === 1 ? '' : 's'}</span><span className="max-w-[65%] truncate">{Object.entries(service.availability || {}).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`).join(' · ') || 'Availability on request'}</span></div>
                                 </div>
                               </button>
@@ -1268,10 +1304,7 @@ export default function AIPlanner() {
                           })}
                         </div>
                       )}
-                      {services.length > 0 && (
-                        <a className="mt-2 inline-block text-[10px] text-amber-300 underline" target="_blank" rel="noopener noreferrer" href={`https://www.google.com/maps/search/${encodeURIComponent(`${category === 'guide' ? 'guides' : 'hotels'} near ${form.places[0] || form.startCity}`)}`}>Check nearby {category === 'guide' ? 'guides' : 'hotels'}</a>
-                      )}
-                      <p className="mt-2 text-[10px] text-slate-500">{form[field] ? 'Click the selected card again to remove it.' : empty}</p>
+                      <p className="mt-2 text-[10px] text-slate-500">{form[field].length ? 'Multiple selections are included in your final plan and price. Click a selected card to remove it.' : empty}</p>
                     </div>
                   );
                 })}
@@ -1447,18 +1480,25 @@ export default function AIPlanner() {
                     <p className="mt-1 text-xs text-emerald-300">₹{Number(itinerary.selectedPackage.price || 0).toLocaleString('en-IN')} · Available for selected dates</p>
                   </div>
                 )}
-                {itinerary.selectedGuide && (
+                {Array.isArray(itinerary.selectedGuide) && itinerary.selectedGuide.length > 0 && (
                   <div className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-5">
                     <p className="text-[10px] uppercase tracking-widest text-cyan-300">Selected guide</p>
-                    <p className="mt-2 font-semibold text-white">{itinerary.selectedGuide.title}</p>
-                    <p className="mt-1 text-xs text-emerald-300">₹{Number(itinerary.selectedGuide.price || 0).toLocaleString('en-IN')} · Available for selected dates</p>
+                    <p className="mt-2 font-semibold text-white">{itinerary.selectedGuide.map((guide) => guide.title).join(', ')}</p>
+                    <p className="mt-1 text-xs text-emerald-300">₹{itinerary.selectedGuide.reduce((sum, guide) => sum + Number(guide.price || 0), 0).toLocaleString('en-IN')} per day · Available for selected dates</p>
+                    <div className="mt-3 flex flex-wrap gap-3">
+                      {itinerary.selectedGuide.map((guide) => serviceQrCodes[guide.id] && <div key={guide.id} className="flex items-center gap-2">
+                        <img src={serviceQrCodes[guide.id]} alt={`${guide.title} verification QR`} className="h-16 w-16 rounded bg-white p-1" />
+                        <a href={`/verify/guide/${encodeURIComponent(guide.provider_id)}`} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-emerald-300 underline">Verify certificate</a>
+                        {guide.blockchain_tx_hash && <a href={`https://amoy.polygonscan.com/tx/${encodeURIComponent(guide.blockchain_tx_hash)}`} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-amber-300 underline">View on Polygon Explorer</a>}
+                      </div>)}
+                    </div>
                   </div>
                 )}
-                {itinerary.selectedAccommodation && (
+                {Array.isArray(itinerary.selectedAccommodation) && itinerary.selectedAccommodation.length > 0 && (
                   <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 p-5">
                     <p className="text-[10px] uppercase tracking-widest text-emerald-300">Selected accommodation</p>
-                    <p className="mt-2 font-semibold text-white">{itinerary.selectedAccommodation.title}</p>
-                    <p className="mt-1 text-xs text-emerald-300">₹{Number(itinerary.selectedAccommodation.price || 0).toLocaleString('en-IN')} · Available for selected dates</p>
+                    <p className="mt-2 font-semibold text-white">{itinerary.selectedAccommodation.map((hotel) => hotel.title).join(', ')}</p>
+                    <p className="mt-1 text-xs text-emerald-300">₹{itinerary.selectedAccommodation.reduce((sum, hotel) => sum + Number(hotel.price || 0), 0).toLocaleString('en-IN')} per night · Available for selected dates</p>
                   </div>
                 )}
               </div>
@@ -1476,7 +1516,7 @@ export default function AIPlanner() {
               <SummaryCard
                 icon={<Wallet />}
                 label="Estimated Budget"
-                value={formatCurrency(itinerary.totalBudget)}
+                value={formatCurrency(itinerary.costEstimate?.estimatedTotal ?? itinerary.totalBudget)}
               />
 
               <SummaryCard
@@ -1582,6 +1622,15 @@ export default function AIPlanner() {
                     </div>
 
                     <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-5">
+                      <div className="mb-4 rounded-xl border border-amber-400/20 bg-amber-400/5 p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-amber-300">Daily route</p>
+                        <p className="mt-1 text-sm font-semibold text-white">{day.routePlan || day.place}</p>
+                        <p className="mt-2 text-xs text-slate-400">
+                          {day.overnight?.type === 'return_to_day_start'
+                            ? `Return to ${day.overnight.location} after visiting these places. Return transport: ${formatCurrency(day.overnight.transportCost)}.`
+                            : `Stay at ${day.overnight?.location || day.place}; the next day starts from there.`}
+                        </p>
+                      </div>
                       <div className="flex items-center gap-2 text-sm font-bold text-white">
                         <Compass className="text-amber-400" size={18} />
                         Day activities
@@ -1676,8 +1725,9 @@ export default function AIPlanner() {
               travelers={form.travelers}
               budgetStatus={itinerary.budgetStatus}
               budgetRecommendation={itinerary.budgetRecommendation}
+              onBook={handleBookItinerary}
+              bookingLoading={bookingLoading}
             />
-
             <div className="mt-8 rounded-3xl border border-slate-800 bg-[#0b1326] p-6">
               <h3 className="text-lg font-bold text-white">Before you travel checklist</h3>
               <p className="mt-1 text-xs text-slate-400">Confirm these items before departure. Checked items are saved for this planner session.</p>
@@ -2047,13 +2097,15 @@ function SummaryCard({ icon, label, value }) {
   );
 }
 
-function TripCostEstimate({ costEstimate, travelers, budgetStatus, budgetRecommendation }) {
+function TripCostEstimate({ costEstimate, travelers, budgetStatus, budgetRecommendation, onBook, bookingLoading }) {
   if (!costEstimate) return null;
   const isOverBudget = Number(costEstimate.remaining) < 0;
   const calculatedRecommendation = isOverBudget
     ? `Estimated costs exceed the budget by ${formatCurrency(Math.abs(Number(costEstimate.remaining) || 0))}. Consider Bus, fewer destinations, or a lower-cost stay.`
     : 'Estimated costs are within the selected budget. Verify live fares and prices before booking.';
   const rows = [
+    ['Package', costEstimate.package, costEstimate.statuses?.package],
+    ['Guide', costEstimate.guide, costEstimate.statuses?.guide],
     ['Transportation', costEstimate.transportation, costEstimate.statuses?.transportation],
     ['Accommodation', costEstimate.accommodation, costEstimate.statuses?.accommodation],
     ['Food', costEstimate.food, costEstimate.statuses?.food],
@@ -2099,6 +2151,11 @@ function TripCostEstimate({ costEstimate, travelers, budgetStatus, budgetRecomme
         <strong>{isOverBudget ? 'Budget warning: ' : 'Budget check: '}</strong>
         {calculatedRecommendation}
       </div>
+      {(Number(costEstimate.package) > 0 || Number(costEstimate.guide) > 0 || Number(costEstimate.accommodation) > 0) && (
+        <button type="button" onClick={onBook} disabled={bookingLoading} className="mt-5 w-full rounded-xl bg-amber-400 px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-950 hover:bg-amber-300 disabled:opacity-60">
+          {bookingLoading ? 'Opening secure payment...' : 'Book selected guide, hotel or package'}
+        </button>
+      )}
     </section>
   );
 }
@@ -2114,7 +2171,8 @@ function TransportPlanSection({ transportPlan }) {
       : [];
   const journeys = [
     ...intercity,
-    ...localTransport
+    ...localTransport,
+    ...(transportPlan?.returnToBase ? [transportPlan.returnToBase] : [])
   ];
   if (journeys.length === 0) return null;
 
@@ -2130,7 +2188,7 @@ function TransportPlanSection({ transportPlan }) {
           </p>
         </div>
         <span className="text-sm font-semibold text-amber-300">
-          Estimated total: {formatCurrency(transportPlan.estimatedTotalTransportCost || 0)}
+          Estimated total: {formatCurrency((transportPlan.estimatedTotalTransportCost || 0) + Number(transportPlan?.returnToBase?.estimatedCost || 0))}
         </span>
       </div>
       <div className="mt-6 grid gap-4 lg:grid-cols-2">

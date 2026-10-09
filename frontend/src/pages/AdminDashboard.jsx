@@ -21,6 +21,7 @@ import {
   Edit2,
   X,
   ExternalLink,
+  Copy,
   DollarSign,
   FileCheck,
   Lock,
@@ -71,6 +72,9 @@ export const AdminDashboard = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('analytics'); // analytics | destinations | services | users | verifications | bookings | enquiries
   const [data, setData] = useState(null);
+  const [copiedLedgerHash, setCopiedLedgerHash] = useState('');
+  const [copiedProviderValue, setCopiedProviderValue] = useState('');
+  const [selectedProviderDetails, setSelectedProviderDetails] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionMessage, setActionMessage] = useState('');
 
@@ -240,6 +244,20 @@ export const AdminDashboard = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const copyLedgerHash = async (hash) => {
+    if (!hash || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(hash);
+    setCopiedLedgerHash(hash);
+    window.setTimeout(() => setCopiedLedgerHash(''), 1600);
+  };
+
+  const copyProviderValue = async (value) => {
+    if (!value || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(value);
+    setCopiedProviderValue(value);
+    window.setTimeout(() => setCopiedProviderValue(''), 1600);
   };
 
   const fetchDestinations = async () => {
@@ -510,7 +528,8 @@ export const AdminDashboard = () => {
         category: provider.provider_type || 'Tourist Guide',
         district: provider.district || 'Ranchi'
       });
-      setActionMessage(`KYC Approved: Minted Digital Certificate with SHA-256 Hash: ${res.certificate?.sha256Hash}`);
+      const certificateHash = res.certificate?.sha256_hash || res.certificate?.sha256Hash || res.certificate?.certificateHash;
+      setActionMessage(`KYC Approved: Minted Digital Certificate with SHA-256 Hash: ${certificateHash || 'recorded on blockchain'}`);
       await fetchVerifications();
       await fetchAnalytics();
     } catch (err) {
@@ -532,6 +551,18 @@ export const AdminDashboard = () => {
       setRejectingId(null);
       setKycRejectReason('');
       await fetchVerifications();
+    } catch (err) {
+      setActionMessage(`Error: ${err.message}`);
+    }
+  };
+
+  const handleRevokeKYC = async (providerId) => {
+    if (!window.confirm('Revoke this provider certificate on Polygon Amoy?')) return;
+    try {
+      const result = await api.admin.revokeCertificate(providerId);
+      setActionMessage(`Certificate revoked. Transaction: ${result.transactionHash}`);
+      await fetchVerifications();
+      await fetchAnalytics();
     } catch (err) {
       setActionMessage(`Error: ${err.message}`);
     }
@@ -950,6 +981,8 @@ export const AdminDashboard = () => {
                           <span>{new Date(tx.created_at || Date.now()).toLocaleDateString()}</span>
                         </div>
                         <p className="truncate text-slate-300 text-[11px]"><strong className="text-slate-500">Type:</strong> {tx.tx_type}</p>
+                        {tx.tx_hash && <div className="flex flex-wrap items-center gap-2 text-[11px]"><span className="break-all text-emerald-400">{tx.tx_hash}</span><button type="button" onClick={() => copyLedgerHash(tx.tx_hash)} title="Copy transaction hash" aria-label="Copy transaction hash" className="inline-flex items-center gap-1 rounded border border-slate-700 px-1.5 py-1 text-slate-300 hover:border-amber-400 hover:text-amber-300"><Copy size={11} /> {copiedLedgerHash === tx.tx_hash ? 'Copied' : 'Copy'}</button><a href={`https://amoy.polygonscan.com/tx/${encodeURIComponent(tx.tx_hash)}`} target="_blank" rel="noreferrer" title="Open transaction on Polygon Amoy" className="text-amber-300 hover:text-amber-200"><ExternalLink size={13} /></a></div>}
+                        {tx.block_number && <a href={`https://amoy.polygonscan.com/block/${encodeURIComponent(tx.block_number)}`} target="_blank" rel="noreferrer" className="text-[11px] text-slate-400 hover:text-amber-300">Block {tx.block_number}</a>}
                         <p className="text-[11px] text-emerald-400 truncate">
                           <strong className="text-slate-500">Contract:</strong> {tx.contract_address || '0xJharkhandStateContract'}
                         </p>
@@ -1371,6 +1404,12 @@ export const AdminDashboard = () => {
                             <h4 className="font-bold text-white text-sm">{p.business_name || p.name || 'Artisan / Guide'}</h4>
                             <p className="text-xs text-slate-400">{p.provider_type} • {p.district} District</p>
                             <p className="text-[10px] text-amber-400 font-mono mt-0.5">License: {p.license_number || 'N/A'}</p>
+                            <div className="mt-2 space-y-1 border-t border-slate-800 pt-2 font-mono text-[10px]">
+                              <p className="text-slate-400">Provider ID: <span className="text-cyan-300">{p.user_id}</span> <button type="button" onClick={() => copyProviderValue(p.user_id)} title="Copy provider ID" className="ml-1 text-slate-500 hover:text-white">{copiedProviderValue === p.user_id ? 'Copied' : 'Copy'}</button></p>
+                              <p className="text-slate-400">Certificate ID: <span className="text-amber-300">{p.certificate_id || '--'}</span> {p.certificate_id && <button type="button" onClick={() => copyProviderValue(p.certificate_id)} title="Copy certificate ID" className="ml-1 text-slate-500 hover:text-white">{copiedProviderValue === p.certificate_id ? 'Copied' : 'Copy'}</button>}</p>
+                              <p className="text-slate-400">Transaction: <span className="break-all text-emerald-300">{p.blockchain_tx_hash || '--'}</span> {p.blockchain_tx_hash && <button type="button" onClick={() => copyProviderValue(p.blockchain_tx_hash)} title="Copy transaction hash" className="ml-1 text-slate-500 hover:text-white">{copiedProviderValue === p.blockchain_tx_hash ? 'Copied' : 'Copy'}</button>}</p>
+                            </div>
+                            <button type="button" onClick={() => setSelectedProviderDetails(p)} className="mt-3 w-full rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-cyan-300 hover:bg-cyan-400/20">Review submitted details &amp; documents</button>
                           </div>
                           <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
                             p.verification_status === 'verified'
@@ -1383,7 +1422,7 @@ export const AdminDashboard = () => {
                           </span>
                         </div>
 
-                        {p.verification_status !== 'verified' && (
+                        {p.verification_status !== 'approved' && p.verification_status !== 'revoked' && (
                           <div className="pt-2 border-t border-slate-800 flex gap-2">
                             <button
                               onClick={() => handleApproveKYC(p)}
@@ -1398,6 +1437,11 @@ export const AdminDashboard = () => {
                               Reject
                             </button>
                           </div>
+                        )}
+                        {p.verification_status === 'approved' && (
+                          <button onClick={() => handleRevokeKYC(p.user_id)} className="w-full rounded-lg border border-red-800 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-red-400 hover:bg-red-950/40">
+                            Revoke Certificate
+                          </button>
                         )}
 
                         {rejectingId === p.user_id && (
@@ -1461,9 +1505,12 @@ export const AdminDashboard = () => {
                         <p className="text-[10px] text-slate-400 truncate">
                           SHA-256: <span className="text-emerald-400">{cert.sha256_hash}</span>
                         </p>
-                        <p className="text-[10px] text-slate-500 truncate">
-                          IPFS CID: {cert.ipfs_cid}
-                        </p>
+                        <p className="text-[10px] text-slate-400">Certificate ID: <span className="text-amber-300">{cert.certificate_id || '--'}</span></p>
+                        <p className="text-[10px] text-cyan-300">Provider ID: {cert.provider_id || '--'}</p>
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <span className="break-all text-emerald-300">Transaction: {cert.blockchain_tx_hash || '--'}</span>
+                          {cert.blockchain_tx_hash && <button type="button" onClick={() => copyProviderValue(cert.blockchain_tx_hash)} title="Copy transaction hash" className="shrink-0 text-slate-400 hover:text-white">{copiedProviderValue === cert.blockchain_tx_hash ? 'Copied' : 'Copy'}</button>}
+                        </div>
                       </div>
                     ))
                   )}
@@ -1780,6 +1827,30 @@ export const AdminDashboard = () => {
           </div>
         )}
 
+        {selectedProviderDetails && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4" onClick={() => setSelectedProviderDetails(null)}>
+            <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-slate-700 bg-[#0b1326] p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+              <div className="flex items-start justify-between gap-4">
+                <div><p className="text-xs font-bold uppercase tracking-widest text-amber-400">KYC review</p><h2 className="mt-2 text-2xl font-serif font-bold text-white">{selectedProviderDetails.name || selectedProviderDetails.business_name}</h2></div>
+                <button type="button" onClick={() => setSelectedProviderDetails(null)} className="rounded-lg border border-slate-700 px-3 py-1 text-slate-300 hover:text-white">Close</button>
+              </div>
+              <div className="mt-5 grid gap-3 text-sm text-slate-300 md:grid-cols-2">
+                {[
+                  ['Provider ID', selectedProviderDetails.user_id], ['Email', selectedProviderDetails.email], ['Mobile', selectedProviderDetails.phone],
+                  ['Business', selectedProviderDetails.business_name], ['Provider type', selectedProviderDetails.provider_type], ['District', selectedProviderDetails.district],
+                  ['Address', selectedProviderDetails.address], ['State', selectedProviderDetails.state], ['Service area', selectedProviderDetails.service_area],
+                  ['Specialization', selectedProviderDetails.specialization], ['Languages', Array.isArray(selectedProviderDetails.languages) ? selectedProviderDetails.languages.join(', ') : selectedProviderDetails.languages],
+                  ['License number', selectedProviderDetails.license_number]
+                ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3"><span className="block text-[10px] uppercase tracking-wider text-slate-500">{label}</span><span className="mt-1 block break-words text-white">{value || '--'}</span></div>)}
+              </div>
+              <div className="mt-5 rounded-xl border border-amber-400/30 bg-amber-400/5 p-4">
+                <p className="text-xs font-bold uppercase tracking-wider text-amber-400">Government ID submitted</p>
+                {(selectedProviderDetails.verification_request?.documents || []).filter((document) => /government|aadhar|aadhaar|identity|id/i.test(document.type || '')).map((document, index) => <div key={`${document.fileName}-${index}`} className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-950/60 p-3 text-sm"><span className="text-white">{document.fileName || 'Government ID'} <span className="text-xs text-slate-500">({document.type || 'Government ID'})</span></span>{document.dataUrl ? <a href={document.dataUrl} download={document.fileName || 'government-id'} className="rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-amber-300">Download document</a> : <span className="text-xs text-red-300">Re-upload required: file data is not stored</span>}</div>)}
+                {!(selectedProviderDetails.verification_request?.documents || []).some((document) => /government|aadhar|aadhaar|identity|id/i.test(document.type || '')) && <p className="mt-2 text-sm text-red-300">No Government ID document was submitted.</p>}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

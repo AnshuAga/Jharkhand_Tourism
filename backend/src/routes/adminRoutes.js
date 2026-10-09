@@ -23,6 +23,7 @@ router.put('/users/:id/status', adminController.toggleUserStatus);
 router.get('/verifications', adminController.getVerifications);
 router.post('/kyc/approve', adminController.approveKYC);
 router.post('/kyc/reject', adminController.rejectKYC);
+router.post('/guides/:providerId/revoke', adminController.revokeKYC);
 
 // Bookings & Payments Oversight
 router.get('/bookings', adminController.getBookings);

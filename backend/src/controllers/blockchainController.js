@@ -2,10 +2,19 @@ import { blockchainService } from '../services/blockchainService.js';
 import { db } from '../database/db.js';
 
 export const blockchainController = {
-  verify(req, res) {
+  async verify(req, res) {
     try {
       const identifier = req.body?.certId || req.body?.identifier || req.query?.certId || req.params?.id;
-      const result = blockchainService.verifyCertificate(identifier);
+      const result = await blockchainService.verifyCertificate(identifier);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  async verifyCertificateById(req, res) {
+    try {
+      const result = blockchainService.verifyCertificateId(req.params.certificateId);
       res.json(result);
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -29,6 +38,15 @@ export const blockchainController = {
       }
       const result = await blockchainService.issueCertificate({ providerId, name, category, district, issuer });
       res.status(201).json({ success: true, ...result });
+    } catch (error) {
+      res.status(400).json({ success: false, message: error.message });
+    }
+  },
+
+  async revokeCertificate(req, res) {
+    try {
+      const result = await blockchainService.revokeCertificate(req.params.providerId || req.body?.providerId);
+      res.json({ success: true, ...result });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
     }

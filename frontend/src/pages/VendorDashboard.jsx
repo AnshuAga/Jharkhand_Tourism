@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import QRCode from 'qrcode';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
@@ -13,12 +14,14 @@ import {
   ShoppingBag,
   Compass,
   FileCheck,
+  Copy,
+  ExternalLink,
   Trash2,
   Lock,
   X
 } from 'lucide-react';
 
-const jharkhandDistricts = ['All districts', 'Bokaro', 'Chatra', 'Deoghar', 'Dhanbad', 'Dumka', 'East Singhbhum', 'Garhwa', 'Giridih', 'Godda', 'Gumla', 'Hazaribagh', 'Jamtara', 'Khunti', 'Koderma', 'Latehar', 'Lohardaga', 'Pakur', 'Palamu', 'Ramgarh', 'Ranchi', 'Sahibganj', 'Seraikela-Kharsawan', 'Simdega', 'West Singhbhum'];
+const jharkhandDistricts = ['Bokaro', 'Chatra', 'Deoghar', 'Dhanbad', 'Dumka', 'East Singhbhum', 'Garhwa', 'Giridih', 'Godda', 'Gumla', 'Hazaribagh', 'Jamtara', 'Khunti', 'Koderma', 'Latehar', 'Lohardaga', 'Pakur', 'Palamu', 'Ramgarh', 'Ranchi', 'Sahibganj', 'Seraikela-Kharsawan', 'Simdega', 'West Singhbhum'];
 const manualRestaurantAmenities = ['Local cuisine', 'Vegetarian options', 'Non-vegetarian options', 'Jain food', 'Tribal cuisine', 'Breakfast', 'Outdoor seating', 'Family friendly', 'Parking', 'Wi-Fi', 'Home delivery'];
 const manualGuideTraits = ['Certified guide', 'Nature trail', 'Safari coordination', 'Local expert', 'Photography'];
 const manualAccommodationAmenities = ['Breakfast', 'Local transfers', 'Nature trail', 'Parking', 'Wi-Fi', 'Family friendly'];
@@ -87,16 +90,32 @@ export default function VendorDashboard() {
   // KYC form state
   const [kycForm, setKycForm] = useState({
     businessName: '',
-    category: 'Certified Eco Guide',
+    category: 'guide',
     district: 'Ranchi',
     licenseNumber: '',
     documents: []
   });
   const [kycLoading, setKycLoading] = useState(false);
   const [kycDocumentType, setKycDocumentType] = useState('Government ID');
-  const [profileForm, setProfileForm] = useState({ name: user?.name || '', phone: user?.phone || '', profileImage: user?.profile_image || '' });
+  const [profileForm, setProfileForm] = useState({
+    name: user?.name || '',
+    phone: user?.phone || '',
+    profileImage: user?.profile_image || '',
+    businessName: '',
+    providerType: '',
+    district: 'Ranchi',
+    address: '',
+    state: 'Jharkhand',
+    serviceArea: 'Statewide',
+    specialization: '',
+    languages: '',
+    licenseNumber: '',
+    governmentIdType: ''
+  });
   const [profileSaving, setProfileSaving] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [certificateQr, setCertificateQr] = useState('');
+  const [copiedTransaction, setCopiedTransaction] = useState(false);
 
   const loadData = async () => {
     try {
@@ -104,6 +123,22 @@ export default function VendorDashboard() {
       if (res && res.success) {
         setDashboard(res);
         if (res.vendor) {
+          setProfileForm((current) => ({
+            ...current,
+            name: res.vendor.name || current.name,
+            phone: res.vendor.phone || user?.phone || current.phone || '',
+            profileImage: res.vendor.profileImage || current.profileImage
+            ,businessName: res.vendor.businessName || current.businessName
+            ,providerType: res.vendor.providerType || current.providerType
+            ,district: res.vendor.district || current.district
+            ,address: res.vendor.address || current.address
+            ,state: res.vendor.state || current.state
+            ,serviceArea: res.vendor.serviceArea || current.serviceArea
+            ,specialization: res.vendor.specialization || current.specialization
+            ,languages: Array.isArray(res.vendor.languages) ? res.vendor.languages.join(', ') : (res.vendor.languages || current.languages)
+            ,licenseNumber: res.vendor.licenseNumber || current.licenseNumber
+            ,governmentIdType: res.vendor.governmentIdType || current.governmentIdType
+          }));
           setKycForm({
             businessName: res.vendor.businessName || '',
             category: res.vendor.providerType === 'guide' ? 'guide' : 'package',
@@ -133,6 +168,27 @@ export default function VendorDashboard() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const providerId = dashboard?.vendor?.id;
+    if (!dashboard?.certificate || !providerId) {
+      setCertificateQr('');
+      return undefined;
+    }
+    const verificationUrl = `${window.location.origin}/verify/guide/${encodeURIComponent(providerId)}`;
+    QRCode.toDataURL(verificationUrl, {
+      width: 320,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#070b14', light: '#ffffff' }
+    }).then((dataUrl) => {
+      if (!cancelled) setCertificateQr(dataUrl);
+    }).catch(() => {
+      if (!cancelled) setCertificateQr('');
+    });
+    return () => { cancelled = true; };
+  }, [dashboard?.certificate, dashboard?.vendor?.id]);
 
   useEffect(() => {
     if (user?.role === 'guide' || dashboard?.vendor?.providerType === 'guide') {
@@ -165,9 +221,25 @@ export default function VendorDashboard() {
     event.preventDefault();
     setProfileSaving(true);
     try {
-      const response = await api.auth.updateProfile(profileForm);
+      const response = await api.auth.updateProfile({
+        name: profileForm.name,
+        phone: profileForm.phone,
+        profileImage: profileForm.profileImage
+      });
+      await api.vendor.updateProfile({
+        business_name: profileForm.businessName,
+        provider_type: profileForm.providerType,
+        district: profileForm.district,
+        address: profileForm.address,
+        state: profileForm.state,
+        service_area: profileForm.serviceArea,
+        specialization: profileForm.specialization,
+        languages: profileForm.languages.split(',').map((value) => value.trim()).filter(Boolean),
+        license_number: profileForm.licenseNumber,
+        government_id_type: profileForm.governmentIdType
+      });
       localStorage.setItem('jharkhand_user', JSON.stringify(response.user));
-      setActionMessage('Guide profile updated successfully.');
+      setActionMessage(`${user?.role === 'guide' ? 'Guide' : 'Vendor'} profile updated successfully.`);
     } catch (err) {
       setActionMessage(`Error: ${err.message}`);
     } finally {
@@ -358,6 +430,13 @@ export default function VendorDashboard() {
   };
 
   const cert = dashboard?.certificate;
+  const certificateTransaction = cert?.blockchain_tx_hash;
+  const copyCertificateTransaction = async () => {
+    if (!certificateTransaction || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(certificateTransaction);
+    setCopiedTransaction(true);
+    window.setTimeout(() => setCopiedTransaction(false), 1600);
+  };
   const stats = dashboard?.stats || {
     totalBookings: 0,
     activeEscrowBookings: 0,
@@ -559,10 +638,9 @@ export default function VendorDashboard() {
                     <p className="text-[10px] uppercase tracking-widest text-amber-400">Quick actions</p>
                     <h2 className="mt-1 text-xl font-serif font-bold">Command center</h2>
                   </div>
-                  {notifications.length > 0 && <span className="rounded-full bg-red-500 px-2 py-1 text-[10px] font-bold text-white">{notifications.length}</span>}
                 </div>
                 <div className="mt-5 grid grid-cols-2 gap-3">
-                  {[['Create tour package', 'services'], ...(isVendor ? [['Add product', 'products']] : []), ['View bookings', 'bookings'], ['Check KYC', 'kyc']].map(([label, tab]) => <button key={label} onClick={() => setActiveTab(tab)} className="rounded-xl border border-slate-700 bg-slate-950/40 px-3 py-3 text-left text-xs font-semibold text-slate-300 hover:border-amber-400 hover:text-amber-300">{label}</button>)}
+                  {[...(isVendor ? [['Add Tourism Service', 'services'], ['Add product', 'products']] : [['Create Guide Service', 'services']]), ['View bookings', 'bookings'], ['KYC', 'kyc']].map(([label, tab]) => <button key={label} onClick={() => setActiveTab(tab)} className="rounded-xl border border-slate-700 bg-slate-950/40 px-3 py-3 text-left text-xs font-semibold text-slate-300 hover:border-amber-400 hover:text-amber-300">{label}</button>)}
                 </div>
               </section>
             </div>
@@ -579,7 +657,11 @@ export default function VendorDashboard() {
                 {cert ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono text-slate-300 pt-2">
                     <div className="p-3 bg-slate-950/70 rounded-xl border border-slate-800 space-y-1">
-                      <span className="text-slate-500 uppercase text-[10px] block">Credential ID</span>
+                      <span className="text-slate-500 uppercase text-[10px] block">Provider ID</span>
+                      <span className="text-cyan-300 font-bold">{cert.provider_id || dashboard?.vendor?.id || '--'}</span>
+                    </div>
+                    <div className="p-3 bg-slate-950/70 rounded-xl border border-slate-800 space-y-1">
+                      <span className="text-slate-500 uppercase text-[10px] block">Certificate ID</span>
                       <span className="text-amber-400 font-bold">{cert.certificate_id || cert.certificateId || '--'}</span>
                     </div>
                     <div className="p-3 bg-slate-950/70 rounded-xl border border-slate-800 space-y-1">
@@ -588,7 +670,11 @@ export default function VendorDashboard() {
                     </div>
                     <div className="p-3 bg-slate-950/70 rounded-xl border border-slate-800 space-y-1 md:col-span-2">
                       <span className="text-slate-500 uppercase text-[10px] block">Blockchain transaction</span>
-                      <span className="text-emerald-400 break-all">{cert.blockchain_tx_hash || '--'}</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-emerald-400 break-all">{certificateTransaction || '--'}</span>
+                        {certificateTransaction && <button type="button" onClick={copyCertificateTransaction} title="Copy transaction hash" aria-label="Copy transaction hash" className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:border-amber-400 hover:text-amber-300"><Copy size={12} /> {copiedTransaction ? 'Copied' : 'Copy'}</button>}
+                        {certificateTransaction && <a href={`https://amoy.polygonscan.com/tx/${encodeURIComponent(certificateTransaction)}`} target="_blank" rel="noreferrer" title="Open transaction on Polygon Amoy" className="text-amber-300 hover:text-amber-200"><ExternalLink size={14} /></a>}
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -607,10 +693,10 @@ export default function VendorDashboard() {
 
               <div className="lg:col-span-4 flex flex-col items-center justify-center p-6 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-3">
                 <span className="text-xs uppercase tracking-widest text-slate-400 font-bold">Tourist Verification</span>
-                {cert?.qr_code_url ? (
+                {certificateQr ? (
                   <>
                     <div className="p-2.5 bg-white rounded-xl shadow-lg">
-                      <img src={cert.qr_code_url} alt="Provider credential verification QR" className="w-40 h-40 object-contain" />
+                      <img src={certificateQr} alt="Provider credential verification QR" className="w-40 h-40 object-contain" />
                     </div>
                     <span className="text-[10px] font-mono text-slate-500">Scan to verify provider credentials</span>
                   </>
@@ -904,7 +990,7 @@ export default function VendorDashboard() {
                   onChange={(e) => setKycForm({ ...kycForm, district: e.target.value })}
                   className="w-full px-4 py-2.5 rounded-xl bg-[#070b14] border border-slate-700 text-slate-100 focus:outline-none focus:border-amber-400"
                 >
-                  {['Ranchi', 'Latehar', 'Palamu', 'Deoghar', 'Giridih', 'Khunti', 'West Singhbhum', 'Hazaribagh', 'Ramgarh', 'Dumka'].map(d => (
+                  {jharkhandDistricts.map(d => (
                     <option key={d}>{d}</option>
                   ))}
                 </select>
@@ -939,7 +1025,16 @@ export default function VendorDashboard() {
                   multiple
                   accept=".pdf,.jpg,.jpeg,.png"
                   required
-                  onChange={(e) => setKycForm({ ...kycForm, documents: [...kycForm.documents, ...Array.from(e.target.files || []).map((file) => ({ type: kycDocumentType, fileName: file.name, fileType: file.type, fileSize: file.size, uploadedAt: new Date().toISOString() }))] })}
+                  onChange={async (e) => {
+                    const files = Array.from(e.target.files || []);
+                    const documents = await Promise.all(files.map((file) => new Promise((resolve, reject) => {
+                      const reader = new FileReader();
+                      reader.onload = () => resolve({ type: kycDocumentType, fileName: file.name, fileType: file.type, fileSize: file.size, uploadedAt: new Date().toISOString(), dataUrl: reader.result });
+                      reader.onerror = reject;
+                      reader.readAsDataURL(file);
+                    })));
+                    setKycForm((current) => ({ ...current, documents: [...current.documents, ...documents] }));
+                  }}
                   className="w-full rounded-xl bg-[#070b14] border border-slate-700 px-4 py-2.5 text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-amber-400 file:px-3 file:py-1.5 file:font-semibold file:text-slate-950"
                 />
                 <p className="mt-1 text-[10px] text-slate-500">Selected files are saved as {kycDocumentType}. Choose another type and upload again to add another category. Selected files: {kycForm.documents.length}</p>
@@ -960,23 +1055,102 @@ export default function VendorDashboard() {
         )}
 
         {activeTab === 'profile' && (
-          <div className="grid gap-6 lg:grid-cols-2">
-            <form onSubmit={handleProfileSave} className="space-y-4 rounded-3xl border border-slate-800 bg-[#0b1326] p-8">
-              <h2 className="text-2xl font-serif font-bold">Guide Profile</h2>
-              <input required value={profileForm.name} onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })} placeholder="Full name" className="w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
-              <input value={user?.email || ''} readOnly className="w-full rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-slate-500" />
-              <input value={profileForm.phone} onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })} placeholder="Phone number" className="w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
-              <input type="file" accept="image/*" onChange={(e) => readImage(e.target.files?.[0], (profileImage) => setProfileForm({ ...profileForm, profileImage }))} className="w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-xs text-slate-300" />
-              {profileForm.profileImage && <img src={profileForm.profileImage} alt="Guide profile preview" className="h-24 w-24 rounded-2xl object-cover" />}
-              <button disabled={profileSaving} className="w-full rounded-xl bg-amber-400 py-3 text-xs font-bold uppercase tracking-wider text-slate-950 disabled:opacity-60">Save guide details</button>
-            </form>
-            <form onSubmit={handlePasswordChange} className="space-y-4 rounded-3xl border border-slate-800 bg-[#0b1326] p-8">
-              <h2 className="text-2xl font-serif font-bold">Change Password</h2>
-              <input required type="password" value={passwordForm.currentPassword} onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })} placeholder="Current password" className="w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
-              <input required minLength="6" type="password" value={passwordForm.newPassword} onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })} placeholder="New password" className="w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
-              <input required minLength="6" type="password" value={passwordForm.confirmPassword} onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })} placeholder="Confirm new password" className="w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
-              <button disabled={profileSaving} className="w-full rounded-xl border border-slate-700 py-3 text-xs font-bold uppercase tracking-wider text-slate-200 hover:border-amber-400 disabled:opacity-60">Change password</button>
-            </form>
+          <div className="space-y-6">
+            <section className="relative overflow-hidden rounded-3xl border border-amber-400/20 bg-gradient-to-br from-[#18233d] via-[#0b1326] to-[#070b14] p-6 md:p-8">
+              <div className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-amber-400/10 blur-3xl" />
+              <div className="relative flex flex-col gap-6 md:flex-row md:items-center">
+                <div className="flex h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-3xl border-2 border-amber-400/50 bg-slate-950 text-4xl font-serif font-bold text-amber-300 shadow-xl shadow-amber-950/30">
+                  {profileForm.profileImage ? <img src={profileForm.profileImage} alt="Profile" className="h-full w-full object-cover" /> : (profileForm.name || 'P').charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-400">Public provider profile</p>
+                  <h2 className="mt-2 truncate text-3xl font-serif font-bold text-white">{profileForm.name || 'Your profile'}</h2>
+                  <p className="mt-1 text-sm text-slate-400">{dashboard?.vendor?.businessName || 'Add your business or unit details in Licensing & KYC'}</p>
+                  <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wider">
+                    <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-cyan-300">{user?.role === 'guide' ? 'Guide' : 'Vendor'}</span>
+                    <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-emerald-300">{dashboard?.vendor?.kycStatus || 'pending'}</span>
+                    <span className="rounded-full border border-slate-700 bg-slate-950/40 px-3 py-1.5 text-slate-300">{dashboard?.vendor?.district || 'District not set'}</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+              <form onSubmit={handleProfileSave} className="space-y-5 rounded-3xl border border-slate-800 bg-[#0b1326] p-6 md:p-8">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-amber-400">Account details</p>
+                  <h2 className="mt-2 text-2xl font-serif font-bold">Personal information</h2>
+                  <p className="mt-1 text-xs text-slate-500">Update your account and provider details here. KYC documents remain the submitted records.</p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="text-xs text-slate-400">Full name
+                    <input required value={profileForm.name} onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })} className="mt-2 w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
+                  </label>
+                  <label className="text-xs text-slate-400">Registered mobile number
+                    <input value={profileForm.phone} onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })} placeholder="Enter mobile number" className="mt-2 w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
+                  </label>
+                  <label className="text-xs text-slate-400 md:col-span-2">Registered email
+                    <input value={dashboard?.vendor?.email || user?.email || ''} readOnly className="mt-2 w-full cursor-not-allowed rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-slate-400" />
+                  </label>
+                  <label className="text-xs text-slate-400">Business / unit name
+                    <input value={profileForm.businessName} onChange={(e) => setProfileForm({ ...profileForm, businessName: e.target.value })} className="mt-2 w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
+                  </label>
+                  <label className="text-xs text-slate-400">District
+                    <select value={profileForm.district} onChange={(e) => setProfileForm({ ...profileForm, district: e.target.value })} className="mt-2 w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white">{jharkhandDistricts.map((district) => <option key={district}>{district}</option>)}</select>
+                  </label>
+                  <label className="text-xs text-slate-400 md:col-span-2">Address
+                    <input value={profileForm.address} onChange={(e) => setProfileForm({ ...profileForm, address: e.target.value })} className="mt-2 w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
+                  </label>
+                  <label className="text-xs text-slate-400">State
+                    <input value={profileForm.state} onChange={(e) => setProfileForm({ ...profileForm, state: e.target.value })} className="mt-2 w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
+                  </label>
+                  <label className="text-xs text-slate-400">Service area
+                    <select value={profileForm.serviceArea} onChange={(e) => setProfileForm({ ...profileForm, serviceArea: e.target.value })} className="mt-2 w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white">
+                      <option value="Statewide">All Jharkhand (Statewide)</option>
+                      {jharkhandDistricts.map((district) => <option key={district} value={district}>{district}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-xs text-slate-400">Specialization
+                    <input value={profileForm.specialization} onChange={(e) => setProfileForm({ ...profileForm, specialization: e.target.value })} className="mt-2 w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
+                  </label>
+                  {isGuide && (
+                    <label className="text-xs text-slate-400">Languages
+                      <input value={profileForm.languages} onChange={(e) => setProfileForm({ ...profileForm, languages: e.target.value })} placeholder="Hindi, English" className="mt-2 w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
+                    </label>
+                  )}
+                  <label className="text-xs text-slate-400">License number
+                    <input value={profileForm.licenseNumber} onChange={(e) => setProfileForm({ ...profileForm, licenseNumber: e.target.value })} className="mt-2 w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
+                  </label>
+                  <div className="md:col-span-2 rounded-xl border border-slate-700 bg-slate-950/40 p-4">
+                    <p className="text-xs font-bold uppercase tracking-wider text-amber-400">Submitted KYC documents</p>
+                    {(dashboard?.verificationRequests || []).flatMap((request) => request.documents || []).length === 0
+                      ? <p className="mt-2 text-xs text-slate-500">No submitted documents found.</p>
+                      : <div className="mt-2 space-y-2">{(dashboard?.verificationRequests || []).flatMap((request) => request.documents || []).map((document, index) => <div key={`${document.fileName || document.type}-${index}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs"><span className="text-slate-200">{document.fileName || 'Submitted document'} <span className="text-amber-300">({document.type || 'Government ID'})</span></span>{document.dataUrl && <span className="flex items-center gap-2">{(document.fileType || '').startsWith('image/') ? <a href={document.dataUrl} target="_blank" rel="noreferrer" className="text-amber-300 hover:text-amber-200">View</a> : <a href={document.dataUrl} download={document.fileName || 'submitted-document'} className="text-amber-300 hover:text-amber-200">Download</a>}</span>}</div>)}</div>}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/30 p-4">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Profile image</label>
+                  <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-center">
+                    <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl bg-slate-900 text-2xl font-serif text-amber-300">
+                      {profileForm.profileImage ? <img src={profileForm.profileImage} alt="Profile preview" className="h-full w-full object-cover" /> : (profileForm.name || 'P').charAt(0).toUpperCase()}
+                    </div>
+                    <input type="file" accept="image/*" onChange={(e) => readImage(e.target.files?.[0], (profileImage) => setProfileForm({ ...profileForm, profileImage }))} className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-amber-400 file:px-3 file:py-1.5 file:font-semibold file:text-slate-950" />
+                  </div>
+                </div>
+                <button disabled={profileSaving} className="w-full rounded-xl bg-amber-400 py-3 text-xs font-bold uppercase tracking-wider text-slate-950 transition hover:bg-amber-300 disabled:opacity-60">{profileSaving ? 'Saving...' : 'Save profile details'}</button>
+              </form>
+
+              <div className="space-y-6">
+                <form onSubmit={handlePasswordChange} className="space-y-4 rounded-3xl border border-slate-800 bg-[#0b1326] p-6 md:p-8">
+                  <p className="text-xs font-bold uppercase tracking-widest text-amber-400">Security</p>
+                  <h2 className="text-xl font-serif font-bold">Change password</h2>
+                  <input required type="password" value={passwordForm.currentPassword} onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })} placeholder="Current password" className="w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
+                  <input required minLength="6" type="password" value={passwordForm.newPassword} onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })} placeholder="New password" className="w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
+                  <input required minLength="6" type="password" value={passwordForm.confirmPassword} onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })} placeholder="Confirm new password" className="w-full rounded-xl border border-slate-700 bg-[#070b14] px-4 py-3 text-sm text-white" />
+                  <button disabled={profileSaving} className="w-full rounded-xl border border-slate-700 py-3 text-xs font-bold uppercase tracking-wider text-slate-200 hover:border-amber-400 disabled:opacity-60">Change password</button>
+                </form>
+              </div>
+            </div>
           </div>
         )}
 

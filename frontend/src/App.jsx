@@ -13,6 +13,7 @@ import Testimonials from './pages/Testimonials';
 import Contact from './pages/Contact';
 import MarketPlace from './pages/market_place';
 import CertificateVerification from './pages/CertificateVerification';
+import PublicGuideVerification from './pages/PublicGuideVerification';
 
 import Login from './pages/Login';
 import TouristDashboard from './pages/TouristDashboard';
@@ -37,7 +38,8 @@ export default function App() {
             <Route path="/testimonials" element={<ProtectedRoute><Testimonials /></ProtectedRoute>} />
             <Route path="/marketplace" element={<ProtectedRoute><MarketPlace /></ProtectedRoute>} />
             <Route path="/contact" element={<ProtectedRoute><Contact /></ProtectedRoute>} />
-            <Route path="/verify" element={<ProtectedRoute><CertificateVerification /></ProtectedRoute>} />
+            <Route path="/verify" element={<ProtectedRoute allowedRoles={['admin']}><CertificateVerification /></ProtectedRoute>} />
+            <Route path="/verify/guide/:providerId" element={<PublicGuideVerification />} />
 
             {/* Public Authentication Portal */}
             <Route path="/login" element={<Login />} />

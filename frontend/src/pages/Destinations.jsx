@@ -45,6 +45,7 @@ function isFavourableMonth(destination) {
   if (!season) return false;
   const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
   const currentMonth = months[new Date().getMonth()];
+  if (/all\s+year|year\s*round|throughout\s+the\s+year/i.test(season)) return true;
   const ranges = season.match(/(january|february|march|april|may|june|july|august|september|october|november|december)\s*[–—-]\s*(january|february|march|april|may|june|july|august|september|october|november|december)/i);
   if (ranges) {
     const start = months.indexOf(ranges[1].toLowerCase());
@@ -53,6 +54,26 @@ function isFavourableMonth(destination) {
     return start <= end ? current >= start && current <= end : current >= start || current <= end;
   }
   return season.includes(currentMonth);
+}
+
+function getDestinationInterests(destination) {
+  const interests = Array.isArray(destination.interests)
+    ? destination.interests
+    : (typeof destination.interests === 'string' ? destination.interests.split(/[,\s]+/).filter(Boolean) : []);
+  return interests.map((interest) => String(interest).toLowerCase());
+}
+
+function getRecommendation(destination, userInterests) {
+  const destinationInterests = getDestinationInterests(destination);
+  const normalizedUserInterests = userInterests.map((interest) => String(interest).toLowerCase());
+  const matchingInterest = normalizedUserInterests.find((interest) =>
+    destinationInterests.includes(interest)
+    || String(destination.category || '').toLowerCase().includes(interest)
+    || String(destination.description || '').toLowerCase().includes(interest)
+  );
+  if (matchingInterest) return { label: 'Recommended for you', reason: matchingInterest };
+  if (Number(destination.rating || 0) >= 4.7) return { label: 'Highly rated', reason: `${Number(destination.rating).toFixed(1)} rating` };
+  return null;
 }
 
 export default function Destinations() {
@@ -170,11 +191,15 @@ export default function Destinations() {
     }
   };
 
-  const recommendedDestinations = destinations.filter((destination) => {
-    if (!profileInterests.length) return false;
-    const content = `${destination.category || ''} ${destination.description || ''} ${destination.activities || ''}`.toLowerCase();
-    return profileInterests.some((interest) => content.includes(String(interest).toLowerCase()));
-  }).slice(0, 3);
+  const recommendedDestinations = destinations
+    .filter((destination) => getRecommendation(destination, profileInterests))
+    .sort((first, second) => {
+      const firstInterest = getRecommendation(first, profileInterests)?.label === 'Recommended for you';
+      const secondInterest = getRecommendation(second, profileInterests)?.label === 'Recommended for you';
+      if (firstInterest !== secondInterest) return firstInterest ? -1 : 1;
+      return Number(second.rating || 0) - Number(first.rating || 0);
+    })
+    .slice(0, 3);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -267,13 +292,24 @@ export default function Destinations() {
         {recommendedDestinations.length > 0 && (
           <section className="rounded-3xl border border-amber-400/20 bg-[#0b1326] p-6">
             <span className="text-xs uppercase tracking-[0.2em] text-amber-400 font-bold">Recommended for you</span>
-            <h2 className="mt-1 text-2xl font-serif font-bold">Based on your travel interests</h2>
+            <h2 className="mt-1 text-2xl font-serif font-bold">
+              {profileInterests.length ? 'Based on your interests and destination ratings' : 'Top-rated destinations for you'}
+            </h2>
             <div className="mt-5 grid md:grid-cols-3 gap-4">
               {recommendedDestinations.map((destination) => (
                 <button key={destination.id} type="button" onClick={() => setSelectedDest(destination)} className="text-left rounded-2xl border border-slate-800 bg-slate-950/50 p-4 hover:border-amber-400/50">
                   <h3 className="font-bold text-white">{destination.name}</h3>
                   <p className="mt-1 text-xs text-slate-400">{destination.district} · {destination.category}</p>
-                  {isFavourableMonth(destination) && <span className="mt-3 inline-block text-[10px] font-bold uppercase text-emerald-400">Favourable this season</span>}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="text-[10px] font-bold uppercase text-emerald-400">
+                      {isFavourableMonth(destination) ? 'Favourable now' : `Best: ${destination.best_season || 'seasonal visits'}`}
+                    </span>
+                    {getRecommendation(destination, profileInterests) && (
+                      <span className="text-[10px] font-bold uppercase text-amber-300">
+                        {getRecommendation(destination, profileInterests).label}
+                      </span>
+                    )}
+                  </div>
                 </button>
               ))}
             </div>
@@ -319,6 +355,7 @@ export default function Destinations() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {destinations.map((dest, idx) => {
               const favourable = isFavourableMonth(dest);
+              const recommendation = getRecommendation(dest, profileInterests);
               const activities = Array.isArray(dest.activities)
                 ? dest.activities
                 : (typeof dest.activities === 'string' ? JSON.parse(dest.activities || '[]') : []);
@@ -348,11 +385,23 @@ export default function Destinations() {
                       <button type="button" aria-label={`Save ${dest.name}`} onClick={() => toggleSavedDestination(dest)} disabled={savingDestinationId === dest.id} className={`absolute right-4 bottom-4 rounded-full p-2 backdrop-blur-md ${savedDestinationIds.has(dest.id) ? 'bg-rose-500 text-white' : 'bg-black/60 text-slate-200 hover:text-rose-300'}`}>
                         <Heart size={16} fill={savedDestinationIds.has(dest.id) ? 'currentColor' : 'none'} />
                       </button>
-                      {favourable && <div className="absolute bottom-4 left-4 rounded-full bg-emerald-400 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-950">Favourable now</div>}
+                      <div className={`absolute bottom-4 left-4 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${favourable ? 'bg-emerald-400 text-slate-950' : 'bg-slate-950/85 text-emerald-300 border border-emerald-400/40'}`}>
+                        {favourable ? 'Favourable now' : `Best: ${dest.best_season || 'seasonal visits'}`}
+                      </div>
                     </div>
                     <div className="p-6 space-y-3">
                       <div className="flex items-baseline justify-between">
                         <h3 className="text-xl font-serif text-slate-100 group-hover:text-amber-400 transition-colors">{dest.name}</h3>
+                        {recommendation && (
+                          <span className="ml-2 shrink-0 rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-amber-300">
+                            {recommendation.label}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                        <span className="text-amber-300">★ {Number(dest.rating || 0) > 0 ? Number(dest.rating).toFixed(1) : 'New'}</span>
+                        {Number(dest.review_count || dest.reviewCount || 0) > 0 && <span>({dest.review_count || dest.reviewCount} reviews)</span>}
+                        <span>· Best time: {dest.best_season || 'Seasonal visits'}</span>
                       </div>
                       <p className="text-xs text-slate-400 font-light leading-relaxed line-clamp-3">
                         {dest.description}

@@ -31,7 +31,7 @@ export default function Navbar() {
 
   const getRoleLabel = () => {
     if (role === 'admin') return 'Admin Hub';
-    if (role === 'vendor') return 'Guide Portal';
+    if (role === 'vendor') return 'Vendor Portal';
     return 'My Dashboard';
   };
 
@@ -58,7 +58,7 @@ export default function Navbar() {
             <Link to="/marketplace" className="hover:text-amber-400 transition-colors">Marketplace</Link>
             <Link to="/arvr" className="hover:text-amber-400 transition-colors">AR/VR Tours</Link>
             <Link to="/transport" className="hover:text-amber-400 transition-colors">Live Transport</Link>
-            <Link to="/verify" className="hover:text-amber-400 transition-colors">Audit Ledger</Link>
+            {role === 'admin' && <Link to="/verify" className="hover:text-amber-400 transition-colors">Audit Ledger</Link>}
             <Link to="/contact" className="hover:text-amber-400 transition-colors">Contact</Link>
           </>}
         </div>
@@ -119,7 +119,7 @@ export default function Navbar() {
             </Link>}
             <Link to="/arvr" onClick={() => setMobileMenuOpen(false)} className="block text-slate-300 hover:text-amber-400">AR/VR Experiences</Link>
             <Link to="/transport" onClick={() => setMobileMenuOpen(false)} className="block text-slate-300 hover:text-amber-400">Live Transport</Link>
-            <Link to="/verify" onClick={() => setMobileMenuOpen(false)} className="block text-slate-300 hover:text-amber-400">Blockchain Audit</Link>
+            {role === 'admin' && <Link to="/verify" onClick={() => setMobileMenuOpen(false)} className="block text-slate-300 hover:text-amber-400">Blockchain Audit</Link>}
             <Link to="/contact" onClick={() => setMobileMenuOpen(false)} className="block text-slate-300 hover:text-amber-400">Contact</Link>
           </>}
           <div className="pt-2 border-t border-slate-800">
