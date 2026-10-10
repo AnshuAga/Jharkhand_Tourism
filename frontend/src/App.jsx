@@ -33,10 +33,10 @@ export default function App() {
             <Route path="/" element={<JharkhandTourismHome />} />
             <Route path="/about" element={<AboutUs />} />
             <Route path="/destinations" element={<Destinations />} />
-            <Route path="/ai-planner" element={<ProtectedRoute><PlannerErrorBoundary><AIPlanner /></PlannerErrorBoundary></ProtectedRoute>} />
-            <Route path="/planner" element={<ProtectedRoute><PlannerErrorBoundary><AIPlanner /></PlannerErrorBoundary></ProtectedRoute>} />
+            <Route path="/ai-planner" element={<ProtectedRoute allowedRoles={['tourist']}><PlannerErrorBoundary><AIPlanner /></PlannerErrorBoundary></ProtectedRoute>} />
+            <Route path="/planner" element={<ProtectedRoute allowedRoles={['tourist']}><PlannerErrorBoundary><AIPlanner /></PlannerErrorBoundary></ProtectedRoute>} />
             <Route path="/testimonials" element={<ProtectedRoute><Testimonials /></ProtectedRoute>} />
-            <Route path="/marketplace" element={<ProtectedRoute><MarketPlace /></ProtectedRoute>} />
+            <Route path="/marketplace" element={<ProtectedRoute allowedRoles={['tourist', 'vendor', 'admin']}><MarketPlace /></ProtectedRoute>} />
             <Route path="/contact" element={<ProtectedRoute><Contact /></ProtectedRoute>} />
             <Route path="/verify" element={<ProtectedRoute allowedRoles={['admin']}><CertificateVerification /></ProtectedRoute>} />
             <Route path="/verify/guide/:providerId" element={<PublicGuideVerification />} />

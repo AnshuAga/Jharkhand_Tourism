@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
+import { io } from 'socket.io-client';
 import { 
   Compass, 
   ShieldCheck, 
@@ -113,6 +114,19 @@ export default function TouristDashboard() {
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  useEffect(() => {
+    const socket = io();
+    const updateVehicles = (vehicles) => setLiveVehicles(Array.isArray(vehicles) ? vehicles : []);
+    socket.on('transport:vehicles', updateVehicles);
+    const poll = setInterval(() => {
+      api.transport.getLiveVehicles().then((res) => updateVehicles(res.vehicles)).catch(() => {});
+    }, 5000);
+    return () => {
+      clearInterval(poll);
+      socket.disconnect();
+    };
   }, []);
 
   const handleReviewSubmit = async (e) => {

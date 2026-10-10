@@ -65,7 +65,7 @@ export default function Navbar() {
 
         {/* Right side role / login CTA */}
         <div className="hidden lg:flex items-center space-x-3">
-          {isAuthenticated && role !== 'guide' && role !== 'vendor' && <Link to="/marketplace?cart=1" title="Open cart" className="relative p-2 text-slate-300 hover:text-amber-400 transition">
+          {isAuthenticated && role === 'tourist' && <Link to="/marketplace?cart=1" title="Open cart" className="relative p-2 text-slate-300 hover:text-amber-400 transition">
             <ShoppingBag size={18} />
             {cartCount > 0 && <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-slate-950">{cartCount}</span>}
           </Link>}
@@ -114,7 +114,7 @@ export default function Navbar() {
           <Link to="/destinations" onClick={() => setMobileMenuOpen(false)} className="block text-slate-300 hover:text-amber-400">Destinations</Link>
           <Link to="/about" onClick={() => setMobileMenuOpen(false)} className="block text-slate-300 hover:text-amber-400">About Us</Link>
           {isAuthenticated && <>
-            {role !== 'guide' && role !== 'vendor' && <Link to="/marketplace?cart=1" onClick={() => setMobileMenuOpen(false)} className="flex items-center gap-2 text-slate-300 hover:text-amber-400">
+            {role === 'tourist' && <Link to="/marketplace?cart=1" onClick={() => setMobileMenuOpen(false)} className="flex items-center gap-2 text-slate-300 hover:text-amber-400">
               <ShoppingBag size={14} /> Cart {cartCount > 0 && <span className="rounded-full bg-amber-400 px-1.5 text-[9px] font-bold text-slate-950">{cartCount}</span>}
             </Link>}
             <Link to="/arvr" onClick={() => setMobileMenuOpen(false)} className="block text-slate-300 hover:text-amber-400">AR/VR Experiences</Link>

@@ -77,7 +77,7 @@ function getRecommendation(destination, userInterests) {
 }
 
 export default function Destinations() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, role } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [destinations, setDestinations] = useState([]);
@@ -430,7 +430,7 @@ export default function Destinations() {
                       <span>Explore Details</span>
                       <ArrowRight className="w-4 h-4" />
                     </button>
-                    {isAuthenticated && <button
+                    {isAuthenticated && role === 'tourist' && <button
                         onClick={() => navigate('/ai-planner', { state: { prefilledDestination: dest.name } })}
                         className="px-3 py-1.5 rounded-lg bg-amber-400/10 border border-amber-400/30 text-amber-400 hover:bg-amber-400 hover:text-slate-950 text-xs font-semibold transition-colors"
                       >
@@ -568,7 +568,7 @@ export default function Destinations() {
 
                 {/* Actions */}
                 <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-slate-800">
-                  {isAuthenticated && <button
+                  {isAuthenticated && role === 'tourist' && <button
                       onClick={() => {
                         setSelectedDest(null);
                         navigate('/ai-planner', { state: { prefilledDestination: selectedDest.name } });

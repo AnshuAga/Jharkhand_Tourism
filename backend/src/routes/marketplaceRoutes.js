@@ -8,7 +8,7 @@ const router = Router();
 router.get('/', marketplaceController.getMarketplaceData);
 
 // Booking (Requires Authenticated Tourist / User)
-router.post('/booking', authenticate, marketplaceController.createBooking);
+router.post('/booking', authenticate, requireRole('tourist'), marketplaceController.createBooking);
 router.get('/my-bookings', authenticate, marketplaceController.getMyBookings);
 
 // Vendor product management

@@ -39,10 +39,14 @@ export default function TransportTracking() {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef(null);
+  const vehicleMarkersRef = useRef(null);
+  const vehicleAnimationFramesRef = useRef(new Map());
+  const vehicleTrailsRef = useRef(new Map());
+  const vehiclePositionsRef = useRef(new Map());
   const routeLineRef = useRef(null);
+  const demoRouteLayersRef = useRef([]);
   const radiusCircleRef = useRef(null);
-  const demoIntervalRef = useRef(null);
-  const demoProgressRef = useRef(0);
+  const [demoStatus, setDemoStatus] = useState(null);
 
   // Initialize Socket.io connection for real-time telemetry
   useEffect(() => {
@@ -54,6 +58,7 @@ export default function TransportTracking() {
     api.transport.getAlerts().then(res => {
       if (res.alerts) setAlerts(res.alerts);
     }).catch(console.warn);
+    api.transport.getDemoStatus().then(setDemoStatus).catch(console.warn);
 
     // Connect WebSocket
     const socket = io();
@@ -63,24 +68,60 @@ export default function TransportTracking() {
     socket.on('transport:alerts', (updated) => {
       setAlerts(updated);
     });
+    socket.on('transport:demo:status', (updated) => {
+      setDemoStatus(updated);
+      if (updated?.vehicles) setVehicles(updated.vehicles);
+    });
+    const fallback = setInterval(() => {
+      api.transport.getDemoStatus().then((updated) => {
+        setDemoStatus(updated);
+        if (updated?.vehicles) setVehicles(updated.vehicles);
+      }).catch(() => {});
+    }, 5000);
 
     return () => {
+      clearInterval(fallback);
       socket.disconnect();
     };
   }, []);
 
   useEffect(() => {
+    if (!selectedVehicle) return;
+    const updatedVehicle = vehicles.find((vehicle) => vehicle.id === selectedVehicle.id);
+    if (updatedVehicle && updatedVehicle !== selectedVehicle) setSelectedVehicle(updatedVehicle);
+  }, [vehicles, selectedVehicle]);
+
+  useEffect(() => {
     if (!mapContainerRef.current) return undefined;
-    mapRef.current = L.map(mapContainerRef.current, { zoomControl: true }).setView([selectedCity.lat, selectedCity.lng], 7);
+    mapRef.current = L.map(mapContainerRef.current, {
+      zoomControl: true,
+      scrollWheelZoom: true,
+      dragging: true,
+      touchZoom: true,
+      doubleClickZoom: true,
+      boxZoom: true,
+      keyboard: true,
+      inertia: true,
+      zoomAnimation: true,
+      markerZoomAnimation: true,
+      wheelDebounceTime: 40,
+      wheelPxPerZoomLevel: 80
+    }).setView([selectedCity.lat, selectedCity.lng], 7);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19
     }).addTo(mapRef.current);
     markersRef.current = L.layerGroup().addTo(mapRef.current);
+    vehicleMarkersRef.current = L.layerGroup().addTo(mapRef.current);
     return () => {
+      vehicleAnimationFramesRef.current.forEach((frame) => cancelAnimationFrame(frame));
+      vehicleAnimationFramesRef.current.clear();
+      vehicleTrailsRef.current.clear();
+      vehiclePositionsRef.current.clear();
       mapRef.current?.remove();
       mapRef.current = null;
       markersRef.current = null;
+      vehicleMarkersRef.current = null;
     };
   }, []);
 
@@ -88,6 +129,8 @@ export default function TransportTracking() {
     if (!mapRef.current || !markersRef.current) return undefined;
       markersRef.current.clearLayers();
       routeLineRef.current?.remove();
+      demoRouteLayersRef.current.forEach((layer) => layer.remove());
+      demoRouteLayersRef.current = [];
       radiusCircleRef.current?.remove();
       radiusCircleRef.current = L.circle([selectedCity.lat, selectedCity.lng], {
         radius: radius * 1000,
@@ -106,39 +149,27 @@ export default function TransportTracking() {
           kind: 'destination',
           destination
         })),
-        ...vehicles.map((vehicle) => ({
-          lat: Number(vehicle.lat),
-          lng: Number(vehicle.lng),
-          title: `${vehicle.name} - ${vehicle.status}`,
-          kind: 'vehicle',
-          vehicle
-        }))
       ];
 
       const validLocations = locations.filter((location) => Number.isFinite(location.lat) && Number.isFinite(location.lng));
-      const bounds = L.latLngBounds(validLocations.map((location) => [location.lat, location.lng]));
+      const activeVehicles = selectedVehicle ? [selectedVehicle] : vehicles;
+      const routeLocations = activeVehicles
+        .filter((vehicle) => vehicle.demo && vehicle.routeWaypoints?.length > 1)
+        .flatMap((vehicle) => vehicle.routeWaypoints.map((point) => [Number(point.lat), Number(point.lng)]));
+      const bounds = L.latLngBounds([
+        ...validLocations.map((location) => [location.lat, location.lng]),
+        ...routeLocations
+      ]);
       validLocations.forEach((location) => {
         const marker = L.circleMarker([location.lat, location.lng], {
-          radius: location.kind === 'vehicle'
-            ? selectedVehicle?.id === location.vehicle?.id ? 13 : 9
-            : location.kind === 'base' ? 8 : 7,
-          fillColor: location.kind === 'vehicle'
-            ? '#34d399'
-            : location.kind === 'base'
+          radius: location.kind === 'base' ? 8 : 7,
+          fillColor: location.kind === 'base'
               ? location.name === selectedCity.name ? '#fbbf24' : '#fb923c'
               : '#94a3b8',
-          color: location.kind === 'vehicle' ? '#052e16' : location.kind === 'base' ? '#451a03' : '#475569',
+          color: location.kind === 'base' ? '#451a03' : '#475569',
           weight: 2,
           fillOpacity: 1
         }).bindTooltip(location.title).addTo(markersRef.current);
-        if (location.kind === 'vehicle') {
-          marker.bindPopup(`<strong>${location.vehicle.name}</strong><br>${location.vehicle.route || 'Route unavailable'}<br>Speed: ${location.vehicle.speedKmH || location.vehicle.speed_kmh || 0} km/h`);
-          marker.on('click', () => {
-            setSelectedVehicle(location.vehicle);
-            setSelectedDestination(null);
-            mapRef.current?.panTo([location.lat, location.lng]);
-          });
-        }
         if (location.kind === 'destination') {
           marker.on('click', () => {
             setSelectedDestination(location.destination);
@@ -147,18 +178,150 @@ export default function TransportTracking() {
           });
         }
       });
+      (selectedVehicle ? [selectedVehicle] : vehicles).filter((vehicle) => vehicle.demo && vehicle.routeWaypoints?.length > 1).forEach((vehicle) => {
+        const routeLayer = L.polyline(
+          vehicle.routeWaypoints.map((point) => [Number(point.lat), Number(point.lng)]),
+          {
+            color: selectedVehicle?.id === vehicle.id ? '#fbbf24' : '#38bdf8',
+            opacity: selectedVehicle?.id === vehicle.id ? 1 : 0.7,
+            weight: selectedVehicle?.id === vehicle.id ? 7 : 5,
+            dashArray: selectedVehicle?.id === vehicle.id ? undefined : '10 8'
+          }
+        ).bindTooltip(`${vehicle.name} · Illustrative demo route`).addTo(mapRef.current);
+        demoRouteLayersRef.current.push(routeLayer);
+        if (selectedVehicle?.id === vehicle.id && vehicle.pathTaken?.length > 1) {
+          const travelledLayer = L.polyline(
+            vehicle.pathTaken.map((point) => [Number(point.lat), Number(point.lng)]),
+            { color: '#22c55e', opacity: 1, weight: 8 }
+          ).bindTooltip('Path taken by selected vehicle').addTo(mapRef.current);
+          demoRouteLayersRef.current.push(travelledLayer);
+        }
+        (vehicle.routeStops || []).forEach((stop) => {
+          const stopMarker = L.circleMarker([Number(stop.lat), Number(stop.lng)], {
+            radius: 7,
+            fillColor: '#fbbf24',
+            color: '#0f172a',
+            weight: 2,
+            fillOpacity: 1
+          }).bindTooltip(`${vehicle.name}: ${stop.name}`).addTo(mapRef.current);
+          demoRouteLayersRef.current.push(stopMarker);
+        });
+      });
       if (routeResult?.waypoints?.length > 1) {
         routeLineRef.current = L.polyline(
           routeResult.waypoints.map((point) => [Number(point.lat), Number(point.lng)]),
           { color: '#fbbf24', opacity: 0.9, weight: 4 }
         ).addTo(mapRef.current);
       }
-      const fitKey = `${selectedCity.name}-${radius}-${nearbyResults?.totalFound || 0}`;
+      const fitKey = `${selectedVehicle?.id || 'fleet'}-${selectedCity.name}-${radius}-${nearbyResults?.totalFound || 0}`;
       if (validLocations.length > 1 && mapRef.current._birsaFitKey !== fitKey) {
         mapRef.current.fitBounds(bounds, { padding: [40, 40] });
         mapRef.current._birsaFitKey = fitKey;
       }
   }, [selectedCity, nearbyResults, vehicles, routeResult, selectedVehicle, radius]);
+
+  useEffect(() => {
+    if (!mapRef.current || !vehicleMarkersRef.current) return undefined;
+
+    const activeIds = new Set(vehicles.map((vehicle) => vehicle.id));
+    vehicleMarkersRef.current.eachLayer((layer) => {
+      if (layer.vehicleId && !activeIds.has(layer.vehicleId)) layer.remove();
+    });
+    vehicleTrailsRef.current.forEach((trail, vehicleId) => {
+      if (!activeIds.has(vehicleId)) {
+        trail.remove();
+        vehicleTrailsRef.current.delete(vehicleId);
+        vehiclePositionsRef.current.delete(vehicleId);
+      }
+    });
+
+    vehicles.forEach((vehicle) => {
+      const lat = Number(vehicle.lat);
+      const lng = Number(vehicle.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+      let marker = Array.from(vehicleMarkersRef.current.getLayers())
+        .find((layer) => layer.vehicleId === vehicle.id);
+      const isSelected = selectedVehicle?.id === vehicle.id;
+      const previousPosition = vehiclePositionsRef.current.get(vehicle.id);
+      const heading = previousPosition
+        ? Math.atan2(lng - previousPosition.lng, lat - previousPosition.lat) * (180 / Math.PI)
+        : 0;
+      const icon = L.divIcon({
+        className: 'vehicle-marker-wrapper',
+        html: `<span class="vehicle-marker${isSelected ? ' vehicle-marker-selected' : ''}" title="${vehicle.name}"><span class="vehicle-marker-pulse"></span><span class="vehicle-marker-direction" style="transform: rotate(${heading}deg)">›</span><span class="vehicle-marker-label">BUS</span></span>`,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17]
+      });
+
+      if (!marker) {
+        marker = L.marker([lat, lng], { icon, zIndexOffset: isSelected ? 1000 : 500 });
+        marker.vehicleId = vehicle.id;
+        marker.bindTooltip(`${vehicle.name} · ${vehicle.status}`);
+        marker.bindPopup(`<strong>${vehicle.name}</strong><br>${vehicle.route || 'Route unavailable'}<br>Speed: ${vehicle.speedKmH || vehicle.speed_kmh || 0} km/h`);
+        marker.on('click', () => {
+          setSelectedVehicle(vehicle);
+          setSelectedDestination(null);
+          mapRef.current?.panTo([Number(vehicle.lat), Number(vehicle.lng)], { animate: true, duration: 0.6 });
+        });
+        marker.addTo(vehicleMarkersRef.current);
+      } else {
+        marker.setIcon(icon);
+        marker.setZIndexOffset(isSelected ? 1000 : 500);
+        marker.setTooltipContent(`${vehicle.name} · ${vehicle.status}`);
+        marker.setPopupContent(`<strong>${vehicle.name}</strong><br>${vehicle.route || 'Route unavailable'}<br>Speed: ${vehicle.speedKmH || vehicle.speed_kmh || 0} km/h`);
+      }
+
+      const start = marker.getLatLng();
+      const trailPoints = [
+        ...(vehicleTrailsRef.current.get(vehicle.id)?.getLatLngs?.() || []).slice(-7),
+        [start.lat, start.lng],
+        [lat, lng]
+      ];
+      let trail = vehicleTrailsRef.current.get(vehicle.id);
+      if (!trail) {
+        trail = L.polyline(trailPoints, {
+          color: isSelected ? '#fbbf24' : '#34d399',
+          opacity: isSelected ? 0.85 : 0.6,
+          weight: isSelected ? 6 : 4,
+          dashArray: '2 8',
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).bindTooltip(`${vehicle.name} · recent movement`).addTo(vehicleMarkersRef.current);
+        trail.vehicleId = vehicle.id;
+        vehicleTrailsRef.current.set(vehicle.id, trail);
+      } else {
+        trail.setStyle({
+          color: isSelected ? '#fbbf24' : '#34d399',
+          opacity: isSelected ? 0.85 : 0.6,
+          weight: isSelected ? 6 : 4
+        });
+        trail.setLatLngs(trailPoints);
+      }
+      vehiclePositionsRef.current.set(vehicle.id, { lat, lng });
+
+      const frame = vehicleAnimationFramesRef.current.get(vehicle.id);
+      if (frame) cancelAnimationFrame(frame);
+      const startedAt = performance.now();
+      const duration = 4200;
+      const animate = (now) => {
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const eased = 1 - ((1 - progress) ** 3);
+        marker.setLatLng([
+          start.lat + ((lat - start.lat) * eased),
+          start.lng + ((lng - start.lng) * eased)
+        ]);
+        if (progress < 1) {
+          vehicleAnimationFramesRef.current.set(vehicle.id, requestAnimationFrame(animate));
+        } else {
+          vehicleAnimationFramesRef.current.delete(vehicle.id);
+        }
+      };
+      vehicleAnimationFramesRef.current.set(vehicle.id, requestAnimationFrame(animate));
+    });
+
+    return undefined;
+  }, [vehicles, selectedVehicle]);
 
   // Fetch nearby attractions when city or radius changes
   useEffect(() => {
@@ -203,6 +366,14 @@ export default function TransportTracking() {
     }
   };
 
+  const fitAllVehicles = () => {
+    if (!mapRef.current || !vehicles.length) return;
+    const locations = vehicles
+      .map((vehicle) => [Number(vehicle.lat), Number(vehicle.lng)])
+      .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng));
+    if (locations.length) mapRef.current.fitBounds(L.latLngBounds(locations), { padding: [40, 40] });
+  };
+
   const selectDestination = (destination) => {
     setSelectedDestination(destination);
     setSelectedVehicle(null);
@@ -218,63 +389,17 @@ export default function TransportTracking() {
     document.getElementById('route-planner')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
-  const [demoRunning, setDemoRunning] = useState(false);
   const [demoError, setDemoError] = useState('');
-
-  useEffect(() => () => {
-    if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
-  }, []);
-
-  const broadcastDemoPosition = async () => {
-    const progress = demoProgressRef.current;
-    const start = { lat: 23.3441, lng: 85.3096 };
-    const end = { lat: 23.4795, lng: 84.2697 };
-    const lat = start.lat + (end.lat - start.lat) * progress;
-    const lng = start.lng + (end.lng - start.lng) * progress;
-    const payload = {
-      vehicleId: 'JH-EV-DEMO',
-      name: 'Jharkhand Demo Eco-Bus',
-      plate: 'DEMO EV 001',
-      route: 'Ranchi Railway Station → Patratu Valley → Netarhat',
-      lat: Number(lat.toFixed(6)),
-      lng: Number(lng.toFixed(6)),
-      speedKmH: 35 + Math.round(progress * 10),
-      status: 'active',
-      nextStop: progress < 0.5 ? 'Patratu Valley' : 'Netarhat Sunrise Point'
-    };
-
-    try {
-      await api.transport.updateTelemetry(payload);
-      const res = await api.transport.getLiveVehicles();
-      if (res && res.vehicles) setVehicles(res.vehicles);
-      setSelectedVehicle((current) => current?.id === payload.vehicleId
-        ? { ...current, ...payload }
-        : current);
-      demoProgressRef.current = progress >= 1 ? 0 : Number((progress + 0.05).toFixed(2));
-      return true;
-    } catch (err) {
-      setDemoError(`Demo update failed: ${err.message}`);
-      if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
-      demoIntervalRef.current = null;
-      setDemoRunning(false);
-      return false;
-    }
-  };
 
   const handleDemoToggle = async () => {
     setDemoError('');
-    if (demoRunning) {
-      if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
-      demoIntervalRef.current = null;
-      setDemoRunning(false);
-      return;
-    }
-
-    demoProgressRef.current = 0;
-    setDemoRunning(true);
-    const started = await broadcastDemoPosition();
-    if (started && !demoIntervalRef.current) {
-      demoIntervalRef.current = setInterval(broadcastDemoPosition, 3000);
+    const action = demoStatus?.running ? 'pause' : 'resume';
+    try {
+      const result = await api.transport.controlDemo(action);
+      setDemoStatus(result);
+      if (result.vehicles) setVehicles(result.vehicles);
+    } catch (err) {
+      setDemoError(`Demo control failed: ${err.message}`);
     }
   };
 
@@ -315,16 +440,28 @@ export default function TransportTracking() {
             </div>
             <div className="flex flex-wrap items-center gap-3 self-start md:self-auto">
               <span className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-emerald-400"><span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" /> {vehicles.length} live vehicles</span>
+              <button type="button" onClick={fitAllVehicles} className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-semibold text-slate-200 hover:border-amber-400 hover:text-amber-300">
+                <Navigation size={14} /> Fit demo fleet
+              </button>
               <a href={`https://www.google.com/maps/search/?api=1&query=${selectedCity.lat},${selectedCity.lng}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2.5 text-xs font-semibold text-slate-200 hover:border-amber-400 hover:text-amber-300">
                 <MapPin size={14} /> Open in Google Maps
               </a>
             </div>
           </div>
-          <div ref={mapContainerRef} className="h-90 w-full bg-slate-950" aria-label="Interactive Jharkhand destinations and transport map" />
+          <div className="transport-map relative">
+            <div className="pointer-events-none absolute left-4 top-4 z-[400] rounded-xl border border-slate-700/80 bg-slate-950/85 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-300 shadow-lg backdrop-blur-sm">
+              Drag to move · Scroll to zoom · Double-click to zoom
+            </div>
+            <div ref={mapContainerRef} className="h-[520px] w-full bg-slate-950" aria-label="Interactive Jharkhand destinations and transport map" />
+          </div>
           <div className="flex flex-wrap items-center gap-4 border-t border-slate-800 px-6 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
             <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-amber-400" />Selected location</span>
             <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-orange-400" />District base ({DISTRICT_BASES.length})</span>
-            <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-emerald-400" />Active vehicle</span>
+            <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-emerald-400" />Moving vehicle</span>
+            <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-green-500" />Path taken</span>
+            <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-sky-400" />Illustrative route</span>
+            <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-amber-400" />Route stop</span>
+            {selectedVehicle && <button type="button" onClick={() => setSelectedVehicle(null)} className="ml-auto text-amber-300 hover:text-white">Show all vehicles</button>}
             <span><i className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />Destination</span>
           </div>
           {selectedVehicle && (
@@ -361,7 +498,7 @@ export default function TransportTracking() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-2xl font-serif font-bold">Live Tourist Transit</h2>
-              <p className="text-xs text-slate-400 mt-1">Registered vehicles reporting telemetry across Jharkhand circuits.</p>
+              <p className="text-xs text-amber-300 mt-1 font-semibold">DEMO SIMULATION — NOT REAL GPS · Server-owned elapsed-time transit preview.</p>
             </div>
             <span className="text-xs font-mono text-amber-400 bg-amber-400/10 px-3 py-1 rounded-full border border-amber-400/20">
               {vehicles.length} Active Vehicle{vehicles.length === 1 ? '' : 's'}
@@ -379,7 +516,7 @@ export default function TransportTracking() {
                 onClick={handleDemoToggle}
                 className="mt-4 px-4 py-2 rounded-xl bg-amber-400 text-slate-950 text-xs font-bold uppercase tracking-wider hover:bg-amber-300 transition"
               >
-                {demoRunning ? 'Stop Vehicle Demo' : 'Start Vehicle Demo'}
+                {demoStatus?.running ? 'Pause Vehicle Demo' : 'Start Vehicle Demo'}
               </button>
             </div>
           ) : (
@@ -420,10 +557,22 @@ export default function TransportTracking() {
                       <span className="text-slate-500 flex items-center gap-1"><MapPin size={13} /> GPS:</span>
                       <span className="font-mono text-[10px] text-slate-400">{v.lat}, {v.lng}</span>
                     </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Distance:</span>
+                      <span className="text-white">{v.distanceToNextStopKm ?? '—'} km</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">ETA:</span>
+                      <span className="text-white">{v.eta || '—'}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Updated:</span>
+                      <span className="text-[10px] text-slate-400">{v.updatedAt ? new Date(v.updatedAt).toLocaleTimeString() : '—'}</span>
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] text-slate-500">Demo Transit Data</span>
+                    <span className="text-[10px] text-amber-300">DEMO — NOT REAL GPS</span>
                     <button type="button" onClick={() => trackVehicle(v)} className="rounded-lg border border-amber-400/40 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-amber-300 hover:bg-amber-400 hover:text-slate-950">
                       Track on map
                     </button>
@@ -433,11 +582,11 @@ export default function TransportTracking() {
             </div>
           )}
           {demoError && <p className="mt-4 rounded-xl border border-red-800/60 bg-red-950/20 p-3 text-xs text-red-300">{demoError}</p>}
-          {vehicles.some((vehicle) => vehicle.id === 'JH-EV-DEMO') && (
+          {demoStatus && (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-400/30 bg-amber-400/5 p-3 text-xs">
-              <span className="text-amber-200">Demo Transit Data is moving along the Ranchi → Netarhat route every 3 seconds.</span>
+              <span className="text-amber-200">DEMO SIMULATION — NOT REAL GPS · Server simulation is {demoStatus.running ? 'running' : 'paused'} across 3 Jharkhand routes.</span>
               <button type="button" onClick={handleDemoToggle} className="font-bold uppercase tracking-wider text-amber-300 hover:text-white">
-                {demoRunning ? 'Stop demo' : 'Resume demo'}
+                {demoStatus.running ? 'Pause demo' : 'Resume demo'}
               </button>
             </div>
           )}

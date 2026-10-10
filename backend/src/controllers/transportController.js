@@ -13,8 +13,29 @@ export const transportController = {
         count: vehicles.length,
         vehicles,
         available: vehicles.length > 0,
-        message: vehicles.length > 0 ? `${vehicles.length} vehicle(s) transmitting live GPS.` : 'Live transport data is currently unavailable.'
+        message: 'GPS-free demo simulation data is available for demonstration purposes.',
+        source: 'demo',
+        demo: true,
+        simulation: geoTransportService.getDemoStatus()
       });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  getDemoStatus(req, res) {
+    res.json({ success: true, ...geoTransportService.getDemoStatus() });
+  },
+
+  controlDemo(req, res) {
+    try {
+      const action = req.body?.action || req.params.action;
+      const actions = { start: 'startDemo', pause: 'pauseDemo', resume: 'resumeDemo', reset: 'resetDemo' };
+      if (!actions[action]) return res.status(400).json({ success: false, message: 'Action must be start, pause, resume, or reset.' });
+      const status = geoTransportService[actions[action]]();
+      req.app.get('io')?.emit('transport:demo:status', status);
+      req.app.get('io')?.emit('transport:vehicles', status.vehicles);
+      res.json({ success: true, ...status });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
     }

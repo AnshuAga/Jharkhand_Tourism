@@ -38,6 +38,10 @@ const io = new Server(server, {
   }
 });
 app.set('io', io);
+geoTransportService.setDemoBroadcaster((status) => {
+  io.emit('transport:demo:status', status);
+  io.emit('transport:vehicles', status.vehicles);
+});
 
 // Middleware
 app.use(cors({ origin: '*' }));

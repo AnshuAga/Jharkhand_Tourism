@@ -156,7 +156,9 @@ export const api = {
     getAlerts: () => request('/transport/alerts'),
     createAlert: (alertData) => request('/transport/alerts', { method: 'POST', body: JSON.stringify(alertData) }),
     deleteAlert: (id) => request(`/transport/alerts/${id}`, { method: 'DELETE' }),
-    updateTelemetry: (data) => request('/transport/driver/telemetry', { method: 'POST', body: JSON.stringify(data) })
+    updateTelemetry: (data) => request('/transport/driver/telemetry', { method: 'POST', body: JSON.stringify(data) }),
+    getDemoStatus: () => request('/transport/demo/status'),
+    controlDemo: (action) => request('/transport/demo/control', { method: 'POST', body: JSON.stringify({ action }) })
   },
   arvr: {
     getExperiences: () => request('/arvr/experiences')

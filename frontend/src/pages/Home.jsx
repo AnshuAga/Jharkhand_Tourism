@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { io } from 'socket.io-client';
 import { api } from '../services/api';
 import birsaMunda from '../assets/birsa-munda.jpg';
 import deogharImage from "../assets/Deoghar-Shrines.jpg";
@@ -19,13 +18,11 @@ import {
   Star,
   ChevronRight,
   Menu,
-  X,
   Phone,
   Mail,
   Award,
   Layers,
-  Lock,
-  AlertTriangle
+  Lock
 } from 'lucide-react';
 
 export default function JharkhandTourismHome() {
@@ -35,24 +32,6 @@ export default function JharkhandTourismHome() {
   const [enquiry, setEnquiry] = useState({ name: '', email: '', message: '' });
   const [enquiryStatus, setEnquiryStatus] = useState({ type: '', message: '' });
   const [isSubmittingEnquiry, setIsSubmittingEnquiry] = useState(false);
-  const [alerts, setAlerts] = useState([]);
-  const [dismissedAlertId, setDismissedAlertId] = useState(null);
-
-  useEffect(() => {
-    api.transport.getAlerts()
-      .then((result) => setAlerts(result.alerts || []))
-      .catch((error) => console.warn('Unable to load travel advisories:', error.message));
-
-    const socket = io();
-    socket.on('transport:alerts', (updatedAlerts) => {
-      setAlerts(Array.isArray(updatedAlerts) ? updatedAlerts : []);
-    });
-
-    return () => socket.disconnect();
-  }, []);
-
-  const visibleAlert = alerts.find((alert) => alert.id !== dismissedAlertId);
-
   const submitEnquiry = async (event) => {
     event.preventDefault();
     setEnquiryStatus({ type: '', message: '' });
@@ -98,48 +77,6 @@ export default function JharkhandTourismHome() {
 
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 font-sans selection:bg-amber-500 selection:text-slate-950">
-      {visibleAlert && (
-        <motion.aside
-          initial={{ opacity: 0, y: -24, scale: 0.96 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          className="fixed top-5 left-1/2 z-50 w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 rounded-2xl border border-amber-400/40 bg-[#0b1326]/95 p-5 shadow-2xl shadow-black/40 backdrop-blur-md"
-          role="alert"
-        >
-          <div className="flex items-start gap-4">
-            <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
-              visibleAlert.severity === 'Alert' ? 'bg-red-400/15 text-red-300' : 'bg-amber-400/15 text-amber-300'
-            }`}>
-              <AlertTriangle className="h-5 w-5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400">
-                  {visibleAlert.type || 'Travel Advisory'}
-                </span>
-                {visibleAlert.severity && (
-                  <span className="rounded-full border border-slate-700 px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-300">
-                    {visibleAlert.severity}
-                  </span>
-                )}
-              </div>
-              <h2 className="mt-1 text-lg font-serif font-bold text-white">{visibleAlert.title}</h2>
-              <p className="mt-1 text-sm leading-relaxed text-slate-300">{visibleAlert.message}</p>
-              {visibleAlert.location && (
-                <p className="mt-2 text-xs font-semibold text-amber-200">Location: {visibleAlert.location}</p>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => setDismissedAlertId(visibleAlert.id)}
-              aria-label="Dismiss travel advisory"
-              className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-        </motion.aside>
-      )}
-      
       {/* Luxurious Glassmorphism Floating Navigation */}
     
 

@@ -7,6 +7,9 @@ const router = Router();
 // Public routes
 router.get('/map-config', transportController.getMapConfig);
 router.get('/live', transportController.getLiveVehicles);
+router.get('/demo/status', transportController.getDemoStatus);
+router.post('/demo/:action', transportController.controlDemo);
+router.post('/demo/control', transportController.controlDemo);
 router.get('/nearby', transportController.getNearby);
 router.get('/route', transportController.getRoute);
 router.get('/alerts', transportController.getAlerts);

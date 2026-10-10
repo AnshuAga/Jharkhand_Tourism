@@ -400,7 +400,7 @@ function ProductCard({
 export default function MarketPlace() {
   const { user, role } = useAuth();
   const navigate = useNavigate();
-  const canPurchase = role !== 'guide' && role !== 'vendor';
+  const canPurchase = role === 'tourist';
   const cartKey = `jharkhand_cart_${user?.id || user?.email || 'guest'}`;
   const location = useLocation();
   const [items, setItems] = useState(products);
@@ -423,10 +423,10 @@ export default function MarketPlace() {
   const [paymentGateway, setPaymentGateway] = useState("escrow");
 
   useEffect(() => {
-    if (new URLSearchParams(location.search).get("cart") === "1") {
+    if (canPurchase && new URLSearchParams(location.search).get("cart") === "1") {
       setIsCartOpen(true);
     }
-  }, [location.search]);
+  }, [location.search, canPurchase]);
 
   useEffect(() => {
     try {
@@ -1200,16 +1200,16 @@ export default function MarketPlace() {
                       {selectedProduct.price.toLocaleString("en-IN")}
                     </div>
 
-                    <button
-                      onClick={() => {
-                        addToCart(selectedProduct);
-                        setSelectedProduct(null);
-                      }}
-                      className="flex items-center gap-2 rounded-xl bg-amber-400 px-5 py-3 text-sm font-bold text-slate-950 transition hover:bg-amber-300"
-                    >
-                      <ShoppingBag size={17} />
-                      Add to Cart
-                    </button>
+                    {canPurchase && <button
+                        onClick={() => {
+                          addToCart(selectedProduct);
+                          setSelectedProduct(null);
+                        }}
+                        className="flex items-center gap-2 rounded-xl bg-amber-400 px-5 py-3 text-sm font-bold text-slate-950 transition hover:bg-amber-300"
+                      >
+                        <ShoppingBag size={17} />
+                        Add to Cart
+                      </button>}
 
                   </div>
 
