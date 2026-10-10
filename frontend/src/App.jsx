@@ -26,7 +26,7 @@ export default function App() {
   return (
     <AuthProvider>
       <Router>
-        <div className="min-h-screen bg-[#070b14] text-slate-100 font-sans selection:bg-amber-500 selection:text-slate-950 relative">
+        <div className="app-shell min-h-screen font-sans relative">
           <Navbar />
           <Routes>
             {/* Core Preserved Pages */}

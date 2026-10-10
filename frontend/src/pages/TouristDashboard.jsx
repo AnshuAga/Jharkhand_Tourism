@@ -27,6 +27,18 @@ import {
   X
 } from 'lucide-react';
 
+const TOURIST_INTERESTS = [
+  ['nature', 'Nature & waterfalls'],
+  ['wildlife', 'Wildlife & safaris'],
+  ['culture', 'Tribal culture & crafts'],
+  ['spiritual', 'Spiritual heritage'],
+  ['adventure', 'Adventure & trekking'],
+  ['food', 'Local food'],
+  ['photography', 'Photography']
+];
+
+const interestLabels = Object.fromEntries(TOURIST_INTERESTS);
+
 function preferenceInterests(preferences) {
   const interests = preferences?.interests;
   if (Array.isArray(interests)) return interests;
@@ -56,7 +68,8 @@ export default function TouristDashboard() {
     budget: 25000,
     travelDuration: 4,
     startingLocation: 'Ranchi',
-    groupType: 'family'
+    groupType: 'family',
+    interests: ['nature']
   });
   const [prefSaving, setPrefSaving] = useState(false);
   const [prefSavedMsg, setPrefSavedMsg] = useState('');
@@ -88,7 +101,10 @@ export default function TouristDashboard() {
             budget: dashRes.tourist.preferences.budget || 25000,
             travelDuration: dashRes.tourist.preferences.travel_duration || 4,
             startingLocation: dashRes.tourist.preferences.starting_location || 'Ranchi',
-            groupType: dashRes.tourist.preferences.group_type || 'family'
+            groupType: dashRes.tourist.preferences.group_type || 'family',
+            interests: preferenceInterests(dashRes.tourist.preferences).length
+              ? preferenceInterests(dashRes.tourist.preferences)
+              : ['nature']
           });
         }
       }
@@ -226,6 +242,23 @@ export default function TouristDashboard() {
   );
   const savedDestinations = destinations.filter((destination) => savedDestinationIds.has(String(destination.id)));
   const visibleAlert = alerts.find((alert) => alert.id !== dismissedAlertId);
+  const alertTone = visibleAlert?.severity === 'Alert'
+    ? {
+      icon: 'border-[#b64e32]/40 bg-[#b64e32]/15 text-[#e7a38f]',
+      badge: 'border-[#b64e32]/45 bg-[#b64e32]/15 text-[#e7a38f]',
+      accent: 'bg-[#b64e32]'
+    }
+    : visibleAlert?.severity === 'Warning'
+      ? {
+        icon: 'border-[#987448]/50 bg-[#987448]/15 text-[#e7d1b0]',
+        badge: 'border-[#987448]/50 bg-[#987448]/15 text-[#e7d1b0]',
+        accent: 'bg-[#987448]'
+      }
+      : {
+        icon: 'border-[#e7d1b0]/35 bg-[#e7d1b0]/10 text-[#e7d1b0]',
+        badge: 'border-[#e7d1b0]/35 bg-[#e7d1b0]/10 text-[#e7d1b0]',
+        accent: 'bg-[#e7d1b0]'
+      };
   const plannerPreferences = {
     days: preferences.travel_duration || 4,
     budget: preferences.budget || 25000,
@@ -238,37 +271,37 @@ export default function TouristDashboard() {
     <div className="min-h-screen bg-[#070b14] text-slate-100 pt-32 pb-24 px-6 md:px-16 selection:bg-amber-500 selection:text-slate-950 font-sans">
       {visibleAlert && (
         <aside
-          className="fixed top-24 left-1/2 z-40 w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 rounded-2xl border border-amber-400/40 bg-[#0b1326]/95 p-5 shadow-2xl shadow-black/40 backdrop-blur-md"
+          className="fixed top-24 left-1/2 z-40 w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 overflow-hidden rounded-2xl border border-[#987448]/55 bg-[#292725] p-5 shadow-2xl shadow-black/40"
           role="alert"
+          aria-live="assertive"
         >
+          <div className={`absolute inset-x-0 top-0 h-1 ${alertTone.accent}`} />
           <div className="flex items-start gap-4">
-            <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
-              visibleAlert.severity === 'Alert' ? 'bg-red-400/15 text-red-300' : 'bg-amber-400/15 text-amber-300'
-            }`}>
+            <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${alertTone.icon}`}>
               <AlertTriangle className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400">
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#e7d1b0]">
                   {visibleAlert.type || 'Travel Advisory'}
                 </span>
                 {visibleAlert.severity && (
-                  <span className="rounded-full border border-slate-700 px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-300">
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${alertTone.badge}`}>
                     {visibleAlert.severity}
                   </span>
                 )}
               </div>
-              <h2 className="mt-1 text-lg font-serif font-bold text-white">{visibleAlert.title}</h2>
-              <p className="mt-1 text-sm leading-relaxed text-slate-300">{visibleAlert.message}</p>
+              <h2 className="mt-1 text-lg font-serif font-bold text-[#f8f1e7]">{visibleAlert.title}</h2>
+              <p className="mt-1 text-sm leading-relaxed text-[#e7d1b0]">{visibleAlert.message}</p>
               {visibleAlert.location && (
-                <p className="mt-2 text-xs font-semibold text-amber-200">Location: {visibleAlert.location}</p>
+                <p className="mt-2 text-xs font-semibold text-[#f8f1e7]">Location: {visibleAlert.location}</p>
               )}
             </div>
             <button
               type="button"
               onClick={() => setDismissedAlertId(visibleAlert.id)}
               aria-label="Dismiss travel advisory"
-              className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+              className="rounded-lg p-1 text-[#e7d1b0]/70 transition hover:bg-[#3b3733] hover:text-[#f8f1e7]"
             >
               <X className="h-5 w-5" />
             </button>
@@ -378,25 +411,46 @@ export default function TouristDashboard() {
         </div>
 
         <div className="grid lg:grid-cols-[1.4fr_0.6fr] gap-6">
-          <section className="rounded-3xl border border-amber-400/20 bg-gradient-to-br from-[#17213a] to-[#0b1326] p-6 md:p-8">
-            <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-5">
-              <div>
+          <section className="planner-profile-card rounded-3xl p-6 md:p-8">
+            <div className="planner-profile-header">
+              <div className="min-w-0">
                 <span className="text-xs uppercase tracking-[0.2em] text-amber-400 font-bold">AI Trip Planner</span>
-                <h2 className="text-2xl md:text-3xl font-serif font-bold mt-2">Plan Your Jharkhand Journey</h2>
-                <p className="text-sm text-slate-400 mt-2">Use your saved travel profile and let BirsaAI build a feasible route.</p>
+                <h2 className="mt-2 text-2xl font-serif font-bold md:text-3xl">Plan Your Jharkhand Journey</h2>
+                <p className="mt-2 text-sm text-slate-400">Use your saved travel profile and let BirsaAI build a feasible route.</p>
               </div>
-              <Link to="/ai-planner" state={{ plannerPreferences }} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-400 px-5 py-3 text-xs font-bold uppercase tracking-wider text-slate-950 hover:bg-amber-300">
+              <Link to="/ai-planner" state={{ plannerPreferences }} className="planner-profile-action inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-xs font-bold uppercase tracking-wider">
                 <Sparkles size={15} /> Create My Itinerary
               </Link>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-7">
+            <div className="planner-profile-summary mt-7">
               {[
                 ['Days', preferences.travel_duration || '—'],
                 ['Budget', preferences.budget ? `₹${Number(preferences.budget).toLocaleString('en-IN')}` : '—'],
                 ['Travelers', preferences.group_size || '—'],
                 ['Starting', preferences.starting_location || '—'],
                 ['Interests', interests.length ? interests.slice(0, 2).join(', ') : 'Not set']
-              ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-700/70 bg-slate-950/40 p-3"><span className="block text-[10px] uppercase tracking-widest text-slate-500">{label}</span><span className="mt-1 block truncate text-sm font-semibold text-white">{value}</span></div>)}
+              ].map(([label, value]) => <div key={label} className="planner-profile-stat rounded-xl p-3"><span className="block text-[10px] uppercase tracking-widest text-slate-500">{label}</span><span className="mt-1 block truncate text-sm font-semibold text-white">{value}</span></div>)}
+            </div>
+            <div className="mt-5 border-t border-slate-700/60 pt-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-300">Travel interests</span>
+                <button
+                  type="button"
+                  onClick={() => setIsPrefModalOpen(true)}
+                  className="text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:text-white"
+                >
+                  Edit profile
+                </button>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {interests.length ? interests.map((interest) => (
+                  <span key={interest} className="rounded-full border border-amber-400/35 bg-amber-400/10 px-3 py-1.5 text-[10px] font-semibold text-amber-100">
+                    {interestLabels[interest] || interest}
+                  </span>
+                )) : (
+                  <span className="text-xs text-slate-400">No interests selected yet.</span>
+                )}
+              </div>
             </div>
           </section>
           <section id="saved-places" className="rounded-3xl border border-slate-800 bg-[#0b1326] p-6 scroll-mt-32">
@@ -708,6 +762,32 @@ export default function TouristDashboard() {
                     <option>Adventure Friends</option>
                   </select>
                 </div>
+
+                <fieldset>
+                  <legend className="mb-2 block text-slate-400 uppercase tracking-wider">Travel interests</legend>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {TOURIST_INTERESTS.map(([value, label]) => {
+                      const selected = prefForm.interests.includes(value);
+                      return (
+                        <label key={value} className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 transition ${selected ? 'border-amber-400/70 bg-amber-400/10 text-amber-200' : 'border-slate-700 bg-[#070b14] text-slate-400 hover:border-slate-600'}`}>
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => setPrefForm((previous) => ({
+                              ...previous,
+                              interests: selected
+                                ? previous.interests.filter((interest) => interest !== value)
+                                : [...previous.interests, value]
+                            }))}
+                            className="accent-amber-400"
+                          />
+                          <span>{label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1.5 text-[10px] text-slate-500">Choose one or more interests to personalize recommendations.</p>
+                </fieldset>
 
                 <div className="flex gap-3 pt-4 border-t border-slate-800">
                   <button

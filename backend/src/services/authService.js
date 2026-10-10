@@ -30,6 +30,14 @@ export const authService = {
       throw new Error('Passwords do not match.');
     }
 
+    if (phone) {
+      const normalizedPhone = String(phone).replace(/[\s()-]/g, '');
+      if (!/^\+\d{1,4}\d{10}$/.test(normalizedPhone)) {
+        throw new Error('Phone number must include a country code and exactly 10 local digits.');
+      }
+      phone = normalizedPhone;
+    }
+
     if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}/.test(password)) {
       throw new Error('Password must be at least 8 characters and include uppercase, lowercase, number, and special character.');
     }

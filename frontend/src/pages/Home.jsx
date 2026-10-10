@@ -81,12 +81,12 @@ export default function JharkhandTourismHome() {
     
 
       {/* Hero Section styled like the Ceebros Reference */}
-      <section className="relative min-h-screen flex items-end pb-24 px-6 md:px-16 overflow-hidden">
+      <section className="home-hero relative min-h-screen flex items-end pb-24 px-6 md:px-16 overflow-hidden">
         {/* Background Image with Cinematic Gradient Overlay */}
         <div className="absolute inset-0 z-0">
           <img 
-            src="https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=2000&q=90" 
-            alt="Jharkhand Landscape" 
+            src={BetlaImage}
+            alt="Forest landscape at Betla National Park, Jharkhand"
             className="w-full h-full object-cover object-center filter brightness-[0.45] contrast-[1.1]"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-[#070b14] via-[#070b14]/50 to-transparent" />

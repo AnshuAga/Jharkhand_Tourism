@@ -1,17 +1,21 @@
 import React from 'react';
-import { Navigate, Link } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ShieldAlert, ArrowLeft } from 'lucide-react';
 
 export default function ProtectedRoute({ children, allowedRoles = [] }) {
-  const { user, role, loading, isAuthenticated } = useAuth();
+  const { role, loading, isAuthenticated } = useAuth();
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#070b14] text-slate-100 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
-          <span className="text-xs uppercase tracking-widest text-slate-400">Verifying Credentials...</span>
+      <div className="auth-state min-h-screen flex items-center justify-center px-6">
+        <div className="flex max-w-xs flex-col items-center gap-4 text-center">
+          <div className="auth-state-mark">
+            <span className="h-3 w-3 animate-ping rounded-full bg-[var(--jh-gold)]" />
+          </div>
+          <div>
+            <p className="font-serif text-lg text-[var(--jh-forest)]">Preparing your travel desk</p>
+            <span className="mt-1 block text-xs text-[var(--jh-muted)]">Verifying your secure session…</span>
+          </div>
         </div>
       </div>
     );

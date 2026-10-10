@@ -29,6 +29,16 @@ const indianStates = [
   'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh',
   'Uttarakhand', 'West Bengal'
 ];
+const countryCodes = [
+  ['+91', 'India'],
+  ['+1', 'United States / Canada'],
+  ['+44', 'United Kingdom'],
+  ['+61', 'Australia'],
+  ['+65', 'Singapore'],
+  ['+971', 'United Arab Emirates'],
+  ['+81', 'Japan'],
+  ['+49', 'Germany']
+];
 
 export default function Login() {
   const { login, register, verifyEmailOTP, resendOTP, requestLoginOTP, isAuthenticated, user, role: currentRole } = useAuth();
@@ -43,6 +53,7 @@ export default function Login() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [phoneCountryCode, setPhoneCountryCode] = useState('+91');
   const [nationality, setNationality] = useState('Indian');
   const [customNationality, setCustomNationality] = useState('');
   const [state, setState] = useState('');
@@ -184,12 +195,18 @@ export default function Login() {
       return;
     }
 
+    const normalizedPhone = phone.replace(/\D/g, '');
+    if (normalizedPhone && normalizedPhone.length !== 10) {
+      setError('Phone number is optional, but if provided it must contain exactly 10 digits.');
+      return;
+    }
+
     setLoading(true);
     try {
       const newUser = await register({
         name: name.trim(),
         email: email.trim(),
-        phone: phone.trim() || null,
+        phone: normalizedPhone ? `${phoneCountryCode}${normalizedPhone}` : null,
         nationality: (nationality === 'Other' ? customNationality : nationality).trim(),
         state: nationality === 'Indian' ? state : null,
         dateOfBirth: dateOfBirth || null,
@@ -457,17 +474,28 @@ export default function Login() {
               </div>
 
               <div>
-                <label className="block text-xs uppercase tracking-widest text-slate-400 mb-1.5">Phone Number (Optional)</label>
-                <div className="relative">
-                  <Phone size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                <label className="block text-xs uppercase tracking-widest text-slate-400 mb-1.5">Mobile Number <span className="normal-case tracking-normal text-slate-500">(Optional)</span></label>
+                <div className="flex gap-2">
+                  <select
+                    aria-label="Country calling code"
+                    value={phoneCountryCode}
+                    onChange={(e) => setPhoneCountryCode(e.target.value)}
+                    className="w-[8.5rem] rounded-xl bg-[#070b14] border border-slate-700 px-3 py-3 text-sm text-slate-100 focus:outline-none focus:border-amber-400 transition"
+                  >
+                    {countryCodes.map(([code, country]) => <option key={code} value={code}>{code} · {country}</option>)}
+                  </select>
                   <input
                     type="tel"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="+91 98765 43210"
-                    className="w-full pl-10 pr-4 py-3 rounded-xl bg-[#070b14] border border-slate-700 text-slate-100 text-sm focus:outline-none focus:border-amber-400 transition"
+                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    inputMode="numeric"
+                    pattern="[0-9]{10}"
+                    maxLength={10}
+                    placeholder="9876543210"
+                    className="min-w-0 flex-1 rounded-xl bg-[#070b14] border border-slate-700 px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-amber-400 transition"
                   />
                 </div>
+                <p className="mt-1.5 text-[10px] text-slate-500">Enter 10 digits only. The selected country code will be saved with your number.</p>
               </div>
 
               {selectedRole === 'tourist' && (

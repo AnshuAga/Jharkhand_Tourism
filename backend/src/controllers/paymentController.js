@@ -25,6 +25,7 @@ function bookingInput(req) {
   const {
     itemType = 'product', itemId, travelers = 1, checkInDate, checkOutDate, days = 1
   } = req.body;
+  
   if (!itemId || !purchasableTypes.has(itemType)) {
     const error = new Error('A valid marketplace item or destination is required.');
     error.status = 400;
