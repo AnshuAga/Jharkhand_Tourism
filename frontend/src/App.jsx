@@ -21,6 +21,7 @@ import VendorDashboard from './pages/VendorDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import ARVRExperience from './pages/ARVRExperience';
 import TransportTracking from './pages/TransportTracking';
+import SentimentAnalysis from './pages/SentimentAnalysis';
 
 export default function App() {
   return (
@@ -73,6 +74,7 @@ export default function App() {
             {/* Immersive AR/VR & Live Transport Telemetry */}
             <Route path="/arvr" element={<ProtectedRoute><ARVRExperience /></ProtectedRoute>} />
             <Route path="/transport" element={<ProtectedRoute><TransportTracking /></ProtectedRoute>} />
+            <Route path="/sentiment" element={<ProtectedRoute allowedRoles={['admin']}><SentimentAnalysis /></ProtectedRoute>} />
           </Routes>
 
           {/* Floating Chatbot Widget Fixed Across All Pages */}

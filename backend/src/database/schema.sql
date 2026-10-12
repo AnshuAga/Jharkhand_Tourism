@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS bookings (
     contract_tx_hash TEXT,
     status TEXT NOT NULL CHECK(status IN ('initiated', 'payment_pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'refunded')),
     cancellation_reason TEXT,
+    delivery_address TEXT,
     settled_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -295,16 +296,43 @@ CREATE TABLE IF NOT EXISTS reviews (
     target_id TEXT NOT NULL,
     rating REAL NOT NULL CHECK(rating >= 1.0 AND rating <= 5.0),
     review_text TEXT NOT NULL,
-    sentiment TEXT NOT NULL CHECK(sentiment IN ('Positive', 'Neutral', 'Negative')),
+    sentiment TEXT NOT NULL CHECK(sentiment IN ('Positive','Neutral','Negative','Mixed')),
     compound_score REAL NOT NULL,
     emotion TEXT DEFAULT 'Neutral',
-    aspects TEXT NOT NULL, -- JSON Object: { cleanliness, hospitality, transport, food, safety }
+    aspects TEXT NOT NULL, -- JSON Object: { cleanliness: "Negative", food: "Positive" }; keyword-based model labels
     is_flagged INTEGER DEFAULT 0,
+    publication_status TEXT NOT NULL DEFAULT 'published' CHECK(publication_status IN ('pending','published','hidden')),
+    review_status TEXT NOT NULL DEFAULT 'published' CHECK(review_status IN ('published','pending_review','rejected')),
+    model_version TEXT NOT NULL DEFAULT 'lexicon-v1',
+    detector_version TEXT NOT NULL DEFAULT 'rules-v1',
+    suspicion_score REAL NOT NULL DEFAULT 0,
+    suspicion_reasons TEXT NOT NULL DEFAULT '[]',
+    risk_category TEXT NOT NULL DEFAULT 'low' CHECK(risk_category IN ('low','medium','high')),
+    detection_analyzed_at DATETIME,
+    verified_sentiment TEXT CHECK(verified_sentiment IN ('Positive','Neutral','Negative','Mixed')),
+    verified_fake_label TEXT CHECK(verified_fake_label IN ('genuine','fake')),
+    annotation_status TEXT NOT NULL DEFAULT 'unreviewed' CHECK(annotation_status IN ('unreviewed','in_progress','verified')),
+    annotated_by TEXT REFERENCES users(id),
+    annotated_at DATETIME,
+    verified_sentiment_by TEXT REFERENCES users(id),
+    verified_sentiment_at DATETIME,
+    verified_fake_by TEXT REFERENCES users(id),
+    verified_fake_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_reviews_target ON reviews(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_user_target ON reviews(user_id, target_type, target_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_reviews_sentiment ON reviews(sentiment);
+CREATE TABLE IF NOT EXISTS review_annotation_history (
+    id TEXT PRIMARY KEY,
+    review_id TEXT NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+    admin_id TEXT NOT NULL REFERENCES users(id),
+    verified_sentiment TEXT,
+    verified_fake_label TEXT,
+    note TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
 -- 17. NOTIFICATIONS
 CREATE TABLE IF NOT EXISTS notifications (

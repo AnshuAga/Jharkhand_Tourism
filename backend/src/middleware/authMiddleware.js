@@ -2,6 +2,28 @@ import jwt from 'jsonwebtoken';
 import { JWT_SECRET } from '../config/constants.js';
 import { db } from '../database/db.js';
 
+export function optionalAuthenticate(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return next();
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = db.users.findById(decoded.id);
+    if (user?.is_active) {
+      req.user = {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        is_email_verified: user.is_email_verified
+      };
+    }
+  } catch {
+    // Public recommendation requests may proceed without a valid session.
+  }
+  next();
+}
+
 export function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {

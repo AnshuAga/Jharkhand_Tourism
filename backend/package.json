@@ -8,7 +8,11 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "seed": "node src/database/seed.js",
-    "seed:destinations": "node src/database/seedAdditionalDestinations.js"
+    "seed:destinations": "node src/database/seedAdditionalDestinations.js",
+    "test:sentiment": "node --test test/sentimentService.test.js",
+    "test:review-intelligence": "node --test test/sentimentService.test.js test/fakeReviewDetection.test.js test/adminModeration.test.js",
+    "test:recommendations": "node --test test/recommendationService.test.js",
+    "test:all": "node --test test/*.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

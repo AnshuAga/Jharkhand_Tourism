@@ -67,7 +67,7 @@ export default function CertificateVerification() {
   return (
     <div className="min-h-screen bg-[#070b14] px-6 pb-24 pt-32 font-sans text-slate-100 md:px-16">
       <div className="mx-auto max-w-7xl space-y-8">
-        <header className="rounded-3xl border border-amber-400/20 bg-gradient-to-br from-[#17213a] to-[#0b1326] p-7 md:p-10">
+        <header className="rounded-3xl border border-amber-400/20 bg-[#0b1326] p-7 md:p-10">
           <span className="text-xs font-bold uppercase tracking-[0.2em] text-amber-400">Immutable ledger verification</span>
           <h1 className="mt-3 text-3xl font-serif font-bold md:text-5xl">Blockchain Verification &amp; Audit Center</h1>
           <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-400">Verify tourism credentials, booking transactions, vendor registrations and service records using blockchain-backed verification.</p>

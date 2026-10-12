@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
+import SentimentAnalysis from './SentimentAnalysis';
 import {
   ShieldCheck,
   TrendingUp,
@@ -70,13 +71,57 @@ const guideTraitOptions = ['Certified guide', 'Nature trail', 'Safari coordinati
 
 export const AdminDashboard = () => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('analytics'); // analytics | destinations | services | users | verifications | bookings | enquiries
+  const [activeTab, setActiveTab] = useState('analytics'); // analytics | sentiment | reviews | destinations | services | users | verifications | bookings | enquiries
+  const [reviewList, setReviewList] = useState([]);
+  const [reviewIntelligence, setReviewIntelligence] = useState(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+  const [reviewFilter, setReviewFilter] = useState({ status: '', risk: '' });
   const [data, setData] = useState(null);
+  const [recommendationAnalytics, setRecommendationAnalytics] = useState(null);
   const [copiedLedgerHash, setCopiedLedgerHash] = useState('');
   const [copiedProviderValue, setCopiedProviderValue] = useState('');
   const [selectedProviderDetails, setSelectedProviderDetails] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionMessage, setActionMessage] = useState('');
+
+  const handleDeleteReview = async (review) => {
+    if (!window.confirm('Delete this review permanently? This cannot be undone.')) return;
+    try {
+      await api.admin.deleteReview(review.id);
+      setReviewList((items) => items.filter((item) => item.id !== review.id));
+      setActionMessage('Review deleted successfully.');
+    } catch (error) {
+      setActionMessage(`Error: ${error.message}`);
+    }
+  };
+
+  const handleReanalyzeReview = async (review) => {
+    try {
+      const response = await api.admin.reanalyzeReview(review.id);
+      setReviewList((items) => items.map((item) => item.id === review.id ? response.review : item));
+      setActionMessage('Review detection completed.');
+    } catch (error) {
+      setActionMessage(`Error: ${error.message}`);
+    }
+  };
+
+  const handleSentimentVerification = async (review, verifiedSentiment) => {
+    if (!verifiedSentiment) return;
+    const previousReview = review;
+    setReviewList((items) => items.map((item) => item.id === review.id
+      ? { ...item, verified_sentiment: verifiedSentiment }
+      : item));
+    try {
+      const response = await api.admin.annotateReview(review.id, { verifiedSentiment });
+      setReviewList((items) => items.map((item) => item.id === review.id ? response.review : item));
+      await fetchReviewIntelligence();
+      setActionMessage('Sentiment verification saved.');
+    } catch (error) {
+      setReviewList((items) => items.map((item) => item.id === review.id ? previousReview : item));
+      setActionMessage(`Error: ${error.message}`);
+    }
+  };
 
   // Destination Management State
   const [destList, setDestList] = useState([]);
@@ -235,9 +280,14 @@ export const AdminDashboard = () => {
   const fetchAnalytics = async () => {
     setLoading(true);
     try {
-      const res = await api.admin.getAnalytics();
+      const [res, reviewAnalytics, recommendationData] = await Promise.all([
+        api.admin.getAnalytics(),
+        api.sentiment.getAnalytics(),
+        api.admin.getRecommendationAnalytics()
+      ]);
+      if (recommendationData?.success) setRecommendationAnalytics(recommendationData);
       if (res && res.success) {
-        setData(res);
+        setData({ ...res, sentiment: reviewAnalytics?.success === false ? res.sentiment : reviewAnalytics });
       }
     } catch (err) {
       console.warn('Admin analytics fetch failed:', err);
@@ -344,6 +394,28 @@ export const AdminDashboard = () => {
     }
   };
 
+  const fetchReviewIntelligence = async () => {
+    setReviewLoading(true);
+    setReviewError('');
+    try {
+      const params = new URLSearchParams();
+      if (reviewFilter.status) params.set('status', reviewFilter.status);
+      if (reviewFilter.risk) params.set('risk', reviewFilter.risk);
+      const response = await api.admin.getReviewIntelligence(params.toString());
+      if (!response?.success || !response.stats || !Array.isArray(response.reviews)) {
+        throw new Error('The review intelligence response is incomplete.');
+      }
+      setReviewIntelligence(response);
+      setReviewList(response.reviews);
+    } catch (error) {
+      setReviewIntelligence(null);
+      setReviewList([]);
+      setReviewError(error.message);
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchAnalytics();
     fetchDestinations();
@@ -357,7 +429,8 @@ export const AdminDashboard = () => {
     if (activeTab === 'enquiries') fetchEnquiries();
     if (activeTab === 'services') fetchServices();
     if (activeTab === 'analytics') fetchAlerts();
-  }, [activeTab, userRoleFilter, destinationFilters]);
+    if (activeTab === 'reviews') fetchReviewIntelligence();
+  }, [activeTab, userRoleFilter, destinationFilters, reviewFilter]);
 
   const handleReviewService = async (service, status) => {
     const reason = status !== 'approved' ? window.prompt(`Enter the reason for ${status === 'changes_requested' ? 'requested changes' : 'rejection'}:`) : '';
@@ -647,8 +720,8 @@ export const AdminDashboard = () => {
   };
 
   const sentiment = data?.sentiment || {
-    sentimentDistribution: { positivePercent: 100, neutralPercent: 0, negativePercent: 0 },
-    aspectScores: { cleanliness: 4.8, hospitality: 4.9, transport: 4.5, food: 4.7, safety: 4.9 }
+    sentimentDistribution: { positivePercent: 0, neutralPercent: 0, negativePercent: 0, mixedPercent: 0 },
+    aspectScores: {}
   };
 
   return (
@@ -694,6 +767,8 @@ export const AdminDashboard = () => {
         <div className="flex flex-wrap gap-2 border-b border-slate-800 pb-4">
           {[
             { id: 'analytics', label: 'Overview & Analytics', icon: TrendingUp },
+            { id: 'sentiment', label: 'AI Sentiment Analysis', icon: Activity },
+            { id: 'reviews', label: 'Reviews & Moderation', icon: FileCheck },
             { id: 'destinations', label: `Destinations (${destList.length || kpis.totalDestinations})`, icon: MapPin },
             { id: 'services', label: 'Packages & Services', icon: Plus },
             { id: 'users', label: 'User Directory', icon: Users },
@@ -719,6 +794,43 @@ export const AdminDashboard = () => {
             );
           })}
         </div>
+
+        {activeTab === 'sentiment' && <SentimentAnalysis embedded />}
+        {activeTab === 'reviews' && (
+          <div className="space-y-4">
+            <div><h2 className="text-2xl font-serif font-bold text-white">Reviews & Moderation</h2><p className="text-sm text-slate-400">Automatic rule-based detection runs at submission. Review suspicious signals and verify labels before export; predictions are never treated as ground truth.</p></div>
+            <div className="flex flex-wrap gap-3">
+              <select value={reviewFilter.status} onChange={(event) => setReviewFilter((current) => ({ ...current, status: event.target.value }))} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-300">
+                <option value="">All moderation statuses</option>
+                <option value="pending_review">Pending investigation</option>
+                <option value="published">Published</option>
+                <option value="rejected">Rejected</option>
+              </select>
+              <select value={reviewFilter.risk} onChange={(event) => setReviewFilter((current) => ({ ...current, risk: event.target.value }))} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-300">
+                <option value="">All risk categories</option>
+                <option value="high">High risk</option>
+                <option value="medium">Medium risk</option>
+                <option value="low">Low risk</option>
+              </select>
+            </div>
+            {reviewError && <div className="rounded-xl border border-rose-800/70 bg-rose-950/30 p-4 text-sm text-rose-200"><p>{reviewError}</p><button type="button" onClick={fetchReviewIntelligence} className="mt-3 rounded-lg border border-rose-700 px-3 py-2 text-xs font-semibold hover:bg-rose-900/40">Retry</button></div>}
+            {reviewLoading && <p className="rounded-xl border border-slate-800 p-6 text-sm text-slate-400">Loading review intelligence...</p>}
+            {!reviewLoading && !reviewError && reviewIntelligence && <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              {[
+                ['Submitted', reviewIntelligence?.stats?.totalSubmitted || 0],
+                ['Published', reviewIntelligence?.stats?.published || 0],
+                ['Pending review', reviewIntelligence?.stats?.pendingReview || 0],
+                ['Confirmed fake', reviewIntelligence?.stats?.confirmedFake || 0],
+                ['Verified sentiment', reviewIntelligence?.stats?.verifiedSentimentLabels || 0],
+                ['Verified fake labels', reviewIntelligence?.stats?.verifiedFakeLabels || 0],
+                ['Awaiting annotation', reviewIntelligence?.stats?.awaitingAnnotation || 0],
+                ['Training eligible', reviewIntelligence?.stats?.trainingEligible || 0]
+              ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3"><span className="text-[10px] uppercase tracking-wider text-slate-500">{label}</span><strong className="mt-1 block text-xl text-white">{value}</strong></div>)}
+            </div>}
+            {!reviewLoading && !reviewError && reviewIntelligence && <div className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-4 text-xs text-slate-300"><strong className="text-amber-300">Publication policy:</strong> {reviewIntelligence.publicationPolicy?.automaticPublicationEnabled ? 'Low-risk reviews are published automatically.' : 'Automatic publication is disabled; new reviews await administrator approval.'} Medium- and high-risk reviews require investigation. <span className="ml-2 text-slate-500">AI predictions and risk scores are advisory; training remains manual and batch-based.</span></div>}
+            {!reviewLoading && !reviewError && reviewIntelligence && (reviewList.length === 0 ? <p className="rounded-xl border border-dashed border-slate-700 p-6 text-slate-500">No reviews match the selected filters.</p> : <div className="space-y-3">{reviewList.map((review) => <article key={review.id} className="rounded-xl border border-slate-800 bg-slate-900/50 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-semibold text-white">{review.user_name} · {review.rating}/5</p><p className="text-xs text-slate-500">{review.target_id} · {new Date(review.created_at).toLocaleString()}</p></div><div className="flex flex-wrap items-center gap-2">            <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${!review.detection_analyzed_at ? 'bg-slate-500/15 text-slate-300' : review.risk_category === 'high' ? 'bg-rose-500/15 text-rose-300' : review.risk_category === 'medium' ? 'bg-amber-500/15 text-amber-300' : 'bg-emerald-500/15 text-emerald-300'}`}>{review.detection_analyzed_at ? `${review.risk_category || 'low'} risk` : 'unanalyzed'}</span>            <select value={review.review_status || 'published'} onChange={async (event) => { try { const response = await api.admin.moderateReview(review.id, event.target.value); setReviewList((items) => items.map((item) => item.id === review.id ? response.review : item)); await fetchReviewIntelligence(); setActionMessage('Moderation status saved.'); } catch (error) { setActionMessage(`Error: ${error.message}`); } }} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-300"><option value="pending_review">Investigate</option><option value="published">Approve / publish</option><option value="rejected">Reject</option></select>            <select value={review.verified_sentiment || ''} onChange={(event) => handleSentimentVerification(review, event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-300"><option value="">Verify sentiment</option><option value="Positive">Positive</option><option value="Neutral">Neutral</option><option value="Negative">Negative</option><option value="Mixed">Mixed</option></select>            <select value={review.verified_fake_label || ''} onChange={async (event) => { if (!event.target.value) return; try { const response = await api.admin.annotateReview(review.id, { verifiedFakeLabel: event.target.value }); setReviewList((items) => items.map((item) => item.id === review.id ? response.review : item)); await fetchReviewIntelligence(); setActionMessage('Authenticity verification saved.'); } catch (error) { setActionMessage(`Error: ${error.message}`); } }} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-slate-300"><option value="">Verify authenticity</option><option value="genuine">Genuine</option><option value="fake">Fake</option></select><button type="button" onClick={() => handleDeleteReview(review)} className="inline-flex items-center gap-1 rounded-lg border border-rose-800/70 px-2 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-950/40" aria-label={`Delete review by ${review.user_name || 'tourist'}`}><Trash2 size={14} /> Delete</button></div></div><p className="mt-3 text-sm text-slate-300">{review.review_text}</p><p className="mt-2 text-xs text-slate-500">AI sentiment: {review.sentiment} · {review.emotion} · model {review.model_version || 'lexicon-v1'}</p>            {review.detection_analyzed_at ? <><p className="mt-2 text-xs text-slate-500">Detection score: {Number(review.suspicion_score || 0).toFixed(2)} · engine {review.detector_version || 'rules-v1'} · {new Date(review.detection_analyzed_at).toLocaleString()}</p><p className="mt-2 text-xs text-amber-300">{(review.suspicion_reasons || []).join('; ') || 'No suspicious signals detected'}</p></> : <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500"><span>Detection has not been run for this record.</span><button type="button" onClick={() => handleReanalyzeReview(review)} className="rounded-md border border-amber-400/30 px-2 py-1 text-amber-300 hover:bg-amber-400/10">Analyze now</button></div>}</article>)}</div>)}
+          </div>
+        )}
 
         {/* TAB 1: OVERVIEW & ANALYTICS */}
         {activeTab === 'analytics' && (
@@ -758,6 +870,38 @@ export const AdminDashboard = () => {
             </div>
 
             {/* Sentiment & Heatmap Grid */}
+            {recommendationAnalytics && (
+              <section className="rounded-2xl border border-amber-400/20 bg-[#0b1326] p-6 space-y-5">
+                <div>
+                  <h2 className="text-xl font-serif text-white">Recommendation Analytics</h2>
+                  <p className="mt-1 text-xs text-slate-400">Database-derived ranking evidence for administrators; no tourist profile is used.</p>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    ['Catalogue destinations', recommendationAnalytics.catalogue.destinationCount],
+                    ['With eligible ratings', recommendationAnalytics.catalogue.destinationsWithEligibleRatings],
+                    ['Without review history', recommendationAnalytics.catalogue.destinationsWithoutReviewHistory],
+                    ['With analyzed sentiment', recommendationAnalytics.catalogue.destinationsWithAnalyzedSentiment]
+                  ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-800 bg-slate-950/50 p-3"><span className="text-[10px] uppercase tracking-wider text-slate-500">{label}</span><strong className="mt-1 block text-xl text-white">{value}</strong></div>)}
+                </div>
+                <div className="grid md:grid-cols-2 gap-5 text-xs">
+                  <div>
+                    <h3 className="font-semibold text-amber-300">Ranking factors</h3>
+                    <p className="mt-2 text-slate-400">Weights: {Object.entries(recommendationAnalytics.ranking.weights).map(([key, value]) => `${key} ${Math.round(value * 100)}%`).join(' · ')}</p>
+                    <p className="mt-2 text-slate-500">{recommendationAnalytics.ranking.factors.join(' · ')}</p>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-rose-300">Concerning feedback</h3>
+                    {recommendationAnalytics.concerningDestinations.length
+                      ? recommendationAnalytics.concerningDestinations.map((destination) => <p key={destination.id} className="mt-2 text-slate-400">{destination.name}: {destination.rating.toFixed(1)}/5 from {destination.reviewCount} eligible ratings</p>)
+                      : <p className="mt-2 text-slate-500">No destination meets the minimum evidence threshold for concerning feedback.</p>}
+                  </div>
+                </div>
+                {recommendationAnalytics.insufficientEvidence.length > 0 && <p className="text-xs text-slate-500">Insufficient evidence: {recommendationAnalytics.insufficientEvidence.map((destination) => `${destination.name} (${destination.reviewCount} review)`).join(' · ')}</p>}
+              </section>
+            )}
+
+            {/* Sentiment & Heatmap Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
               {/* Sentiment ABSA Card */}
               <div className="lg:col-span-6 bg-[#0b1326] border border-slate-800 rounded-3xl p-8 space-y-6">
@@ -771,7 +915,7 @@ export const AdminDashboard = () => {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                   <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 text-center">
                     <Smile className="mx-auto text-emerald-400 mb-1" size={20} />
                     <span className="text-xs text-slate-400">Positive</span>
@@ -787,21 +931,20 @@ export const AdminDashboard = () => {
                     <span className="text-xs text-slate-400">Negative</span>
                     <div className="text-lg font-bold text-white mt-1">{sentiment.sentimentDistribution?.negativePercent ?? 0}%</div>
                   </div>
+                  <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 text-center">
+                    <Meh className="mx-auto text-amber-300 mb-1" size={20} />
+                    <span className="text-xs text-slate-400">Mixed</span>
+                    <div className="text-lg font-bold text-white mt-1">{sentiment.sentimentDistribution?.mixedPercent ?? 0}%</div>
+                  </div>
                 </div>
 
                 <div className="space-y-3 pt-2">
-                  <span className="text-xs uppercase tracking-widest text-slate-400 font-semibold block">Aspect Performance Scores (out of 5.0)</span>
-                  {Object.entries(sentiment.aspectScores || {}).map(([aspect, score]) => (
+                  <span className="text-xs uppercase tracking-widest text-slate-400 font-semibold block">Aspect sentiment counts</span>
+                  {Object.entries(sentiment.aspectSentimentCounts || {}).map(([aspect, counts]) => (
                     <div key={aspect} className="space-y-1">
                       <div className="flex justify-between text-xs text-slate-300">
                         <span className="capitalize">{aspect}</span>
-                        <span className="font-bold text-amber-400">{score} / 5.0</span>
-                      </div>
-                      <div className="h-2 rounded-full bg-slate-950 overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-amber-400 to-emerald-400 rounded-full"
-                          style={{ width: `${(score / 5) * 100}%` }}
-                        />
+                        <span className="font-bold text-amber-400">Positive {counts.Positive || 0} · Neutral {counts.Neutral || 0} · Negative {counts.Negative || 0}</span>
                       </div>
                     </div>
                   ))}

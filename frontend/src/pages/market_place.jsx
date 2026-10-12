@@ -421,6 +421,12 @@ export default function MarketPlace() {
   const [checkoutSuccess, setCheckoutSuccess] = useState(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [paymentGateway, setPaymentGateway] = useState("escrow");
+  const [deliveryAddress, setDeliveryAddress] = useState({
+    address: "", landmark: "", district: "", state: "", pinCode: ""
+  });
+  const [productReviews, setProductReviews] = useState([]);
+  const [productReviewSummary, setProductReviewSummary] = useState(null);
+  const [productReviewsLoading, setProductReviewsLoading] = useState(false);
 
   useEffect(() => {
     if (canPurchase && new URLSearchParams(location.search).get("cart") === "1") {
@@ -446,6 +452,33 @@ export default function MarketPlace() {
   }, [cart, cartKey, cartLoaded, loadedCartKey]);
 
   useEffect(() => {
+    if (!selectedProduct || !selectedProduct.id) {
+      setProductReviews([]);
+      setProductReviewSummary(null);
+      return;
+    }
+    let cancelled = false;
+    setProductReviewsLoading(true);
+    api.sentiment.getReviews(`?targetType=product&targetId=${encodeURIComponent(selectedProduct.id)}&limit=50&sort=newest`)
+      .then((response) => {
+        if (!cancelled) {
+          setProductReviews(Array.isArray(response.reviews) ? response.reviews : []);
+          setProductReviewSummary(response.summary || null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProductReviews([]);
+          setProductReviewSummary(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setProductReviewsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [selectedProduct]);
+
+  useEffect(() => {
     async function loadDynamicMarketplace() {
       setLoadingItems(true);
       try {
@@ -458,8 +491,8 @@ export default function MarketPlace() {
             district: p.district || "Jharkhand",
             material: p.material || "Artisanal",
             price: Number(p.price) || 0,
-            rating: p.rating || 4.8,
-            reviews: p.reviews_count || p.reviews || 12,
+            rating: p.rating == null ? null : Number(p.rating),
+            reviews: Number(p.reviews_count || p.reviews || 0),
             artisan: p.vendor_name || p.artisan_name || "Verified Cooperative Artisan",
             image: p.image || IMG.dhokraGeneric,
             description: p.description,
@@ -481,6 +514,16 @@ export default function MarketPlace() {
 
   const handleCheckout = async () => {
     if (cart.length === 0) return;
+    if (
+      !deliveryAddress.address.trim() ||
+      !deliveryAddress.landmark.trim() ||
+      !deliveryAddress.district.trim() ||
+      !deliveryAddress.state.trim() ||
+      !/^\d{6}$/.test(deliveryAddress.pinCode)
+    ) {
+      alert("Please complete the address, landmark, district, state, and 6-digit PIN code.");
+      return;
+    }
     setCheckoutLoading(true);
     try {
       const Razorpay = await loadRazorpay();
@@ -491,7 +534,8 @@ export default function MarketPlace() {
         const res = await api.payments.createOrder({
           itemType: "product",
           itemId: item.id,
-          travelers
+          travelers,
+          deliveryAddress
         });
         await new Promise((resolve, reject) => {
            console.log("RAZORPAY ORDER RESPONSE:", res);
@@ -1068,6 +1112,45 @@ export default function MarketPlace() {
                   </div>
 
                   <div className="space-y-2">
+                    <label htmlFor="marketplace-delivery-address" className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+                      Complete delivery location
+                    </label>
+                    <textarea
+                      id="marketplace-delivery-address"
+                      placeholder="House/flat, street, locality"
+                      rows={2}
+                      required
+                      value={deliveryAddress.address}
+                      onChange={(event) => setDeliveryAddress((current) => ({ ...current, address: event.target.value }))}
+                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-xs text-slate-200 outline-none focus:border-amber-400"
+                    />
+                    <input
+                      aria-label="Landmark"
+                      placeholder="Landmark"
+                      value={deliveryAddress.landmark}
+                      onChange={(event) => setDeliveryAddress((current) => ({ ...current, landmark: event.target.value }))}
+                      required
+                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-xs text-slate-200 outline-none focus:border-amber-400"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input aria-label="District" placeholder="District" value={deliveryAddress.district} onChange={(event) => setDeliveryAddress((current) => ({ ...current, district: event.target.value }))} required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-xs text-slate-200 outline-none focus:border-amber-400" />
+                      <input aria-label="State" placeholder="State" value={deliveryAddress.state} onChange={(event) => setDeliveryAddress((current) => ({ ...current, state: event.target.value }))} required className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-xs text-slate-200 outline-none focus:border-amber-400" />
+                    </div>
+                    <input
+                      aria-label="6-digit PIN code"
+                      placeholder="6-digit PIN code"
+                      inputMode="numeric"
+                      maxLength={6}
+                      pattern="\d{6}"
+                      value={deliveryAddress.pinCode}
+                      onChange={(event) => setDeliveryAddress((current) => ({ ...current, pinCode: event.target.value.replace(/\D/g, "").slice(0, 6) }))}
+                      required
+                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-xs text-slate-200 outline-none focus:border-amber-400"
+                    />
+                    <p className="text-[10px] text-slate-500">Required for delivery of art and craft orders.</p>
+                  </div>
+
+                  <div className="space-y-2">
                     <label htmlFor="marketplace-payment-gateway" className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
                       Payment gateway
                     </label>
@@ -1157,17 +1240,47 @@ export default function MarketPlace() {
                     />
 
                     <span className="text-white">
-                      {selectedProduct.rating}
+                      {selectedProduct.rating == null ? 'Not yet rated' : selectedProduct.rating}
                     </span>
 
                     <span className="text-slate-500">
-                      ({selectedProduct.reviews} reviews)
+                      ({selectedProduct.reviews} eligible reviews)
                     </span>
                   </div>
 
                   <p className="mt-6 text-sm leading-7 text-slate-400">
                     {selectedProduct.description}
                   </p>
+
+                  <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                    <h3 className="text-sm font-bold text-white">Verified-purchase reviews</h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {productReviewSummary?.totalReviews
+                        ? `${productReviewSummary.averageRating}/5 from ${productReviewSummary.totalReviews} published tourist review${productReviewSummary.totalReviews === 1 ? '' : 's'}`
+                        : 'No published tourist reviews yet.'}
+                    </p>
+                    {productReviewsLoading ? (
+                      <p className="mt-4 text-xs text-slate-500">Loading published reviews…</p>
+                    ) : productReviews.length > 0 ? (
+                      <div className="mt-4 max-h-52 space-y-3 overflow-y-auto pr-1">
+                        {productReviews.map((review) => (
+                          <article key={review.id} className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-xs font-semibold text-slate-200">{review.user_name || 'Tourist'}</span>
+                              <span className="text-xs text-amber-300">{'★'.repeat(Number(review.rating))}{'☆'.repeat(5 - Number(review.rating))}</span>
+                            </div>
+                            <p className="mt-2 text-xs leading-relaxed text-slate-300">{review.review_text}</p>
+                            <time className="mt-2 block text-[10px] text-slate-500">
+                              {review.created_at ? new Date(review.created_at).toLocaleDateString() : ''}
+                            </time>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-4 text-xs text-slate-500">Published reviews will appear here after moderation.</p>
+                    )}
+                    <p className="mt-3 text-[10px] text-slate-500">After your order is completed, use Write a Review from My Orders on your tourist dashboard.</p>
+                  </div>
 
                   <div className="mt-6 grid grid-cols-2 gap-3">
 

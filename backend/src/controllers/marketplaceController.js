@@ -3,6 +3,20 @@ import { emailService } from '../services/emailService.js';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 
+function normalizeDeliveryAddress(value) {
+  if (!value || typeof value !== 'object') return null;
+  const address = {
+    address: String(value.address || '').trim(),
+    landmark: String(value.landmark || '').trim(),
+    district: String(value.district || '').trim(),
+    state: String(value.state || '').trim(),
+    pinCode: String(value.pinCode || '').trim()
+  };
+  return address.address && address.landmark && address.district && address.state && /^\d{6}$/.test(address.pinCode)
+    ? address
+    : null;
+}
+
 export const marketplaceController = {
   getMarketplaceData(req, res) {
     try {
@@ -42,6 +56,7 @@ export const marketplaceController = {
         checkInDate,
         checkOutDate,
         days = 1,
+        deliveryAddress,
         paymentGateway = 'escrow'
       } = req.body;
 
@@ -52,6 +67,10 @@ export const marketplaceController = {
       const touristId = req.user.id;
       if (['guide', 'vendor'].includes(req.user.role)) {
         return res.status(403).json({ success: false, message: 'Guides and vendors can browse the marketplace but cannot purchase products.' });
+      }
+      const normalizedDeliveryAddress = normalizeDeliveryAddress(deliveryAddress);
+      if (itemType === 'product' && !normalizedDeliveryAddress) {
+        return res.status(400).json({ success: false, message: 'A complete delivery location is required for craft orders.' });
       }
       const touristName = req.user.name || 'Explorer';
       const touristEmail = req.user.email;
@@ -124,7 +143,8 @@ export const marketplaceController = {
           contract_address: contractAddress,
           contract_tx_hash: contractTxHash,
           status: 'confirmed',
-          cancellation_reason: null
+          cancellation_reason: null,
+          delivery_address: itemType === 'product' ? JSON.stringify(normalizedDeliveryAddress) : null
         });
       } catch (error) {
         if (stockReserved) db.products.restoreStock(item.id);

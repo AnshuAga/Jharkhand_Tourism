@@ -63,17 +63,13 @@ export const weatherService = {
 
   getFallbackWeather(city) {
     return {
-      success: true,
+      success: false,
+      available: false,
       city,
-      temp: 24,
-      feelsLike: 25,
-      condition: 'Pleasant',
-      description: 'Pleasant plateau climate with gentle breezes',
+      condition: null,
+      description: 'Current weather is unavailable.',
       icon: null,
-      humidity: 62,
-      windSpeed: 12,
-      visibilityKm: 10,
-      source: 'Jharkhand Meteorological Plateau Sensor (Cached)'
+      source: 'No live weather source configured'
     };
   }
 };

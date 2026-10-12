@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MapPin, ArrowRight, Search, Filter, X, Clock, IndianRupee, Compass, Calendar, ExternalLink, CloudSun, Wind, Droplets, Heart } from 'lucide-react';
+import { MapPin, ArrowRight, Search, Filter, X, Clock, IndianRupee, Compass, Calendar, ExternalLink, CloudSun, Wind, Droplets, Heart, Star } from 'lucide-react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { getProfileInterests } from '../utils/profileInterests';
 
 import NetarhatPlateau from '../assets/Netarhat-Plateau.jpeg';
 import BetlaNationalPark from '../assets/Betla-National-Park.jpg';
@@ -40,42 +41,6 @@ function getEntryFee(destination) {
   return match ? Number(match[1].replace(/,/g, '')) : null;
 }
 
-function isFavourableMonth(destination) {
-  const season = String(destination.best_season || destination.best_time_to_visit || '').toLowerCase();
-  if (!season) return false;
-  const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
-  const currentMonth = months[new Date().getMonth()];
-  if (/all\s+year|year\s*round|throughout\s+the\s+year/i.test(season)) return true;
-  const ranges = season.match(/(january|february|march|april|may|june|july|august|september|october|november|december)\s*[–—-]\s*(january|february|march|april|may|june|july|august|september|october|november|december)/i);
-  if (ranges) {
-    const start = months.indexOf(ranges[1].toLowerCase());
-    const end = months.indexOf(ranges[2].toLowerCase());
-    const current = months.indexOf(currentMonth);
-    return start <= end ? current >= start && current <= end : current >= start || current <= end;
-  }
-  return season.includes(currentMonth);
-}
-
-function getDestinationInterests(destination) {
-  const interests = Array.isArray(destination.interests)
-    ? destination.interests
-    : (typeof destination.interests === 'string' ? destination.interests.split(/[,\s]+/).filter(Boolean) : []);
-  return interests.map((interest) => String(interest).toLowerCase());
-}
-
-function getRecommendation(destination, userInterests) {
-  const destinationInterests = getDestinationInterests(destination);
-  const normalizedUserInterests = userInterests.map((interest) => String(interest).toLowerCase());
-  const matchingInterest = normalizedUserInterests.find((interest) =>
-    destinationInterests.includes(interest)
-    || String(destination.category || '').toLowerCase().includes(interest)
-    || String(destination.description || '').toLowerCase().includes(interest)
-  );
-  if (matchingInterest) return { label: 'Recommended for you', reason: matchingInterest };
-  if (Number(destination.rating || 0) >= 4.7) return { label: 'Highly rated', reason: `${Number(destination.rating).toFixed(1)} rating` };
-  return null;
-}
-
 export default function Destinations() {
   const { isAuthenticated, role } = useAuth();
   const navigate = useNavigate();
@@ -92,6 +57,11 @@ export default function Destinations() {
   const [savedDestinationIds, setSavedDestinationIds] = useState(new Set());
   const [profileInterests, setProfileInterests] = useState([]);
   const [savingDestinationId, setSavingDestinationId] = useState('');
+  const [recommendationMap, setRecommendationMap] = useState({});
+  const [publicReviews, setPublicReviews] = useState(null);
+  const [reviewQuery, setReviewQuery] = useState({ sort: 'newest', rating: '', page: 1 });
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsError, setReviewsError] = useState('');
   useEffect(() => {
     if (selectedDest) {
       setWeatherLoading(true);
@@ -104,6 +74,27 @@ export default function Destinations() {
       setDestWeather(null);
     }
   }, [selectedDest]);
+
+  useEffect(() => {
+    if (!selectedDest?.id) {
+      setPublicReviews(null);
+      return;
+    }
+    let active = true;
+    setReviewsLoading(true);
+    setReviewsError('');
+    const params = new URLSearchParams({
+      sort: reviewQuery.sort,
+      page: String(reviewQuery.page),
+      limit: '5'
+    });
+    if (reviewQuery.rating) params.set('rating', reviewQuery.rating);
+    api.sentiment.getPublicReviews(selectedDest.id, params.toString())
+      .then((response) => { if (active) setPublicReviews(response); })
+      .catch((error) => { if (active) setReviewsError(error.message); })
+      .finally(() => { if (active) setReviewsLoading(false); });
+    return () => { active = false; };
+  }, [selectedDest, reviewQuery]);
 
   useEffect(() => {
   }, [selectedDest]);
@@ -157,20 +148,20 @@ export default function Destinations() {
       setSavedDestinationIds(new Set((response.favourites || [])
         .filter((item) => item.target_type === 'destination')
         .map((item) => item.target_id)));
-      const interests = response.tourist?.preferences?.interests;
-      if (Array.isArray(interests)) {
-        setProfileInterests(interests);
-      } else if (typeof interests === 'string') {
-        try {
-          setProfileInterests(JSON.parse(interests));
-        } catch {
-          setProfileInterests(interests.split(',').map((item) => item.trim()).filter(Boolean));
-        }
-      }
+      setProfileInterests(getProfileInterests(response));
     }).catch(() => {
       setSavedDestinationIds(new Set());
     });
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!destinations.length) return;
+    api.recommendations.get({ type: 'destinations', interests: profileInterests, limit: 12 })
+      .then((response) => {
+        setRecommendationMap(Object.fromEntries((response.recommendations || []).map((item) => [item.id, item])));
+      })
+      .catch(() => setRecommendationMap({}));
+  }, [destinations, profileInterests]);
 
   const toggleSavedDestination = async (destination) => {
     if (!isAuthenticated) {
@@ -192,14 +183,16 @@ export default function Destinations() {
   };
 
   const recommendedDestinations = destinations
-    .filter((destination) => getRecommendation(destination, profileInterests))
+    .filter((destination) => recommendationMap[destination.id])
     .sort((first, second) => {
-      const firstInterest = getRecommendation(first, profileInterests)?.label === 'Recommended for you';
-      const secondInterest = getRecommendation(second, profileInterests)?.label === 'Recommended for you';
-      if (firstInterest !== secondInterest) return firstInterest ? -1 : 1;
-      return Number(second.rating || 0) - Number(first.rating || 0);
+      return (recommendationMap[second.id]?.score || 0) - (recommendationMap[first.id]?.score || 0);
     })
     .slice(0, 3);
+  const topRatedDestinations = recommendedDestinations.filter((destination) => {
+    const scored = recommendationMap[destination.id];
+    return scored?.rating !== null && scored?.reviewCount >= 2;
+  });
+  const attributeRecommendations = recommendedDestinations.filter((destination) => !topRatedDestinations.includes(destination));
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -291,28 +284,73 @@ export default function Destinations() {
 
         {recommendedDestinations.length > 0 && (
           <section className="rounded-3xl border border-amber-400/20 bg-[#0b1326] p-6">
-            <span className="text-xs uppercase tracking-[0.2em] text-amber-400 font-bold">Recommended for you</span>
+            <span className="text-xs uppercase tracking-[0.2em] text-amber-400 font-bold">Data-driven destination recommendations</span>
             <h2 className="mt-1 text-2xl font-serif font-bold">
-              {profileInterests.length ? 'Based on your interests and destination ratings' : 'Top-rated destinations for you'}
+              Discover Your Next Destination
             </h2>
+            <p className="mt-2 text-sm text-slate-400">Recommendations combine destination characteristics, available visitor feedback, and {profileInterests.length ? 'your selected interests.' : 'catalogue attributes.'}</p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Profile interests</span>
+              {profileInterests.length
+                ? profileInterests.map((interest) => <span key={interest} className="rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-[10px] font-bold uppercase text-amber-300">{interest}</span>)
+                : <span className="text-xs text-slate-500">No saved interests; using catalogue attributes.</span>}
+            </div>
+            {topRatedDestinations.length > 0 && (
+              <>
+                <h3 className="mt-6 text-lg font-serif font-bold text-white">Top Rated by Visitors</h3>
+                <p className="mt-1 text-xs text-slate-500">Destinations with at least two eligible published ratings.</p>
+              </>
+            )}
             <div className="mt-5 grid md:grid-cols-3 gap-4">
-              {recommendedDestinations.map((destination) => (
+              {topRatedDestinations.map((destination) => (
                 <button key={destination.id} type="button" onClick={() => setSelectedDest(destination)} className="text-left rounded-2xl border border-slate-800 bg-slate-950/50 p-4 hover:border-amber-400/50">
                   <h3 className="font-bold text-white">{destination.name}</h3>
                   <p className="mt-1 text-xs text-slate-400">{destination.district} · {destination.category}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
+                    {recommendationMap[destination.id]?.rating !== null && <span className="text-[10px] font-bold uppercase text-amber-300">★ {recommendationMap[destination.id].rating.toFixed(1)} · {recommendationMap[destination.id].reviewCount} ratings</span>}
+                    {recommendationMap[destination.id]?.sentiment && recommendationMap[destination.id].sentiment.analyzedReviewCount >= 2 && <span className="text-[10px] font-bold uppercase text-emerald-300">Visitor sentiment: {recommendationMap[destination.id].sentiment.label} · Based on {recommendationMap[destination.id].sentiment.analyzedReviewCount} analyzed reviews</span>}
                     <span className="text-[10px] font-bold uppercase text-emerald-400">
-                      {isFavourableMonth(destination) ? 'Favourable now' : `Best: ${destination.best_season || 'seasonal visits'}`}
+                      {destination.best_season ? `Best: ${destination.best_season}` : 'Season information unavailable'}
                     </span>
-                    {getRecommendation(destination, profileInterests) && (
-                      <span className="text-[10px] font-bold uppercase text-amber-300">
-                        {getRecommendation(destination, profileInterests).label}
-                      </span>
-                    )}
+                    {recommendationMap[destination.id]?.matchingInterests?.length > 0 && <span className="text-[10px] font-bold uppercase text-amber-300">Interest match</span>}
                   </div>
+                  <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{recommendationMap[destination.id]?.reasons?.[0] || 'Recommended from destination attributes'}</p>
+                  <details className="mt-3 text-[11px] text-slate-400">
+                    <summary className="cursor-pointer text-amber-300">Why this destination?</summary>
+                    <div className="mt-2 space-y-1">
+                      <p>Interest relevance: {recommendationMap[destination.id]?.interestMatchScore ?? 0}/100</p>
+                      <p>Matched interests: {recommendationMap[destination.id]?.matchingInterests?.join(', ') || 'None'}</p>
+                      <p>Visitor rating: {recommendationMap[destination.id]?.rating === null ? 'Not yet rated' : `${recommendationMap[destination.id].rating.toFixed(1)}/5`}</p>
+                      <p>Eligible reviews: {recommendationMap[destination.id]?.reviewCount ?? 0}</p>
+                      <p>Review evidence: {recommendationMap[destination.id]?.reviewEvidence || 'No eligible visitor reviews'}</p>
+                      <p>Evidence coverage: {recommendationMap[destination.id]?.evidenceCoverage?.percentage ?? 0}% ({recommendationMap[destination.id]?.evidenceCoverage?.label || 'Unavailable'})</p>
+                      <p>Score basis: {recommendationMap[destination.id]?.scoreBasis || 'Available evidence'}</p>
+                      {recommendationMap[destination.id]?.factorBreakdown && Object.entries(recommendationMap[destination.id].factorBreakdown).map(([factor, detail]) => (
+                        <p key={factor}>{factor}: {detail.available ? `${Math.round(detail.value * 100)}% · ${Math.round(detail.contribution * 100)}% contribution` : 'Unavailable; excluded'}</p>
+                      ))}
+                      {recommendationMap[destination.id]?.adjustedRating !== null && <p>Adjusted review signal: {recommendationMap[destination.id].adjustedRating.toFixed(2)}/5 (internal)</p>}
+                      <p>Final recommendation score: {recommendationMap[destination.id]?.finalRecommendationScore ?? recommendationMap[destination.id]?.score ?? 0}/100</p>
+                      <p>{recommendationMap[destination.id]?.rankingExplanation}</p>
+                    </div>
+                  </details>
                 </button>
               ))}
             </div>
+            {attributeRecommendations.length > 0 && (
+              <>
+                <h3 className="mt-8 text-lg font-serif font-bold text-white">Recommended Destinations</h3>
+                <div className="mt-4 grid md:grid-cols-3 gap-4">
+                  {attributeRecommendations.map((destination) => (
+                    <button key={destination.id} type="button" onClick={() => setSelectedDest(destination)} className="text-left rounded-2xl border border-slate-800 bg-slate-950/50 p-4 hover:border-amber-400/50">
+                      <h3 className="font-bold text-white">{destination.name}</h3>
+                      <p className="mt-1 text-xs text-slate-400">{destination.district} · {destination.category}</p>
+                      <p className="mt-3 text-[11px] leading-relaxed text-slate-500">{recommendationMap[destination.id]?.reasons?.[0] || 'Recommended from destination attributes'}</p>
+                      {destination.best_season && <p className="mt-2 text-[10px] font-bold uppercase text-emerald-400">Best: {destination.best_season}</p>}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </section>
         )}
 
@@ -354,8 +392,7 @@ export default function Destinations() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {destinations.map((dest, idx) => {
-              const favourable = isFavourableMonth(dest);
-              const recommendation = getRecommendation(dest, profileInterests);
+              const scoredRecommendation = recommendationMap[dest.id];
               const activities = Array.isArray(dest.activities)
                 ? dest.activities
                 : (typeof dest.activities === 'string' ? JSON.parse(dest.activities || '[]') : []);
@@ -385,23 +422,56 @@ export default function Destinations() {
                       <button type="button" aria-label={`Save ${dest.name}`} onClick={() => toggleSavedDestination(dest)} disabled={savingDestinationId === dest.id} className={`absolute right-4 bottom-4 rounded-full p-2 backdrop-blur-md ${savedDestinationIds.has(dest.id) ? 'bg-rose-500 text-white' : 'bg-black/60 text-slate-200 hover:text-rose-300'}`}>
                         <Heart size={16} fill={savedDestinationIds.has(dest.id) ? 'currentColor' : 'none'} />
                       </button>
-                      <div className={`absolute bottom-4 left-4 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${favourable ? 'bg-emerald-400 text-slate-950' : 'bg-slate-950/85 text-emerald-300 border border-emerald-400/40'}`}>
-                        {favourable ? 'Favourable now' : `Best: ${dest.best_season || 'seasonal visits'}`}
+                      <div className="absolute bottom-4 left-4 rounded-full bg-slate-950/85 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-300 border border-emerald-400/40">
+                        {dest.best_season ? `Best: ${dest.best_season}` : 'Season information unavailable'}
                       </div>
                     </div>
                     <div className="p-6 space-y-3">
                       <div className="flex items-baseline justify-between">
                         <h3 className="text-xl font-serif text-slate-100 group-hover:text-amber-400 transition-colors">{dest.name}</h3>
-                        {recommendation && (
+                        {scoredRecommendation?.matchingInterests?.length > 0 && (
                           <span className="ml-2 shrink-0 rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-amber-300">
-                            {recommendation.label}
+                            Interest match
                           </span>
                         )}
                       </div>
                       <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                        <span className="text-amber-300">★ {Number(dest.rating || 0) > 0 ? Number(dest.rating).toFixed(1) : 'New'}</span>
+                        {Number(dest.review_count || dest.reviewCount || 0) > 0 && <span className="text-amber-300">★ {Number(dest.rating).toFixed(1)}</span>}
                         {Number(dest.review_count || dest.reviewCount || 0) > 0 && <span>({dest.review_count || dest.reviewCount} reviews)</span>}
                         <span>· Best time: {dest.best_season || 'Seasonal visits'}</span>
+                      </div>
+                      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
+                        {scoredRecommendation?.sentiment && scoredRecommendation.sentiment.analyzedReviewCount >= 2 ? (
+                          <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                            <span className="font-bold uppercase tracking-wider text-slate-500">Visitor sentiment</span>
+                            <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 font-bold text-emerald-300">{scoredRecommendation.sentiment.label}</span>
+                            <span className="text-slate-500">{scoredRecommendation.reviewCount} analyzed review{scoredRecommendation.reviewCount === 1 ? '' : 's'}</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap gap-2 text-[10px] text-slate-400">
+                            <span>{dest.category}</span>
+                            {activities.slice(0, 2).map((activity) => <span key={activity} className="text-amber-300">{activity}</span>)}
+                          </div>
+                        )}
+                        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{scoredRecommendation?.reasons?.[0] || 'Recommended from destination attributes'}</p>
+                        {scoredRecommendation && (
+                          <details className="mt-2 text-[11px] text-slate-400">
+                            <summary className="cursor-pointer text-amber-300">Why this destination?</summary>
+                            <div className="mt-2 space-y-1">
+                              <p>Interest relevance: {scoredRecommendation.interestMatchScore}/100</p>
+                              <p>Matched interests: {scoredRecommendation.matchingInterests?.join(', ') || 'None'}</p>
+                              <p>Actual visitor rating: {scoredRecommendation.rating === null ? 'Not yet rated' : `${scoredRecommendation.rating.toFixed(1)}/5`}</p>
+                              <p>Eligible reviews: {scoredRecommendation.reviewCount ? `${scoredRecommendation.reviewCount} eligible review${scoredRecommendation.reviewCount === 1 ? '' : 's'}` : 'No eligible visitor reviews available'}</p>
+                              <p>Sentiment evidence: {scoredRecommendation.factorBreakdown?.sentiment?.available ? `${scoredRecommendation.sentiment?.label || 'Available'} · ${scoredRecommendation.analyzedReviewCount} analyzed` : 'Unavailable'}</p>
+                              <p>Evidence coverage: {scoredRecommendation.evidenceCoverage?.percentage ?? 0}%</p>
+                              <p>Recommendation score based on available evidence: {scoredRecommendation.finalRecommendationScore ?? scoredRecommendation.score}/100</p>
+                              {scoredRecommendation.factorBreakdown && Object.entries(scoredRecommendation.factorBreakdown).map(([factor, detail]) => (
+                                <p key={factor}>{factor}: {detail.available ? `${Math.round(detail.value * 100)}%` : 'Unavailable; excluded'}</p>
+                              ))}
+                              <p>{scoredRecommendation.rankingExplanation}</p>
+                            </div>
+                          </details>
+                        )}
                       </div>
                       <p className="text-xs text-slate-400 font-light leading-relaxed line-clamp-3">
                         {dest.description}
@@ -469,7 +539,6 @@ export default function Destinations() {
                   <div className="absolute bottom-4 left-4 px-3 py-1 rounded-full bg-black/70 backdrop-blur-md border border-slate-700 text-amber-400 text-xs font-semibold uppercase tracking-wider">
                     {selectedDest.tag || selectedDest.category}
                   </div>
-                  {isFavourableMonth(selectedDest) && <div className="absolute bottom-4 right-4 rounded-full bg-emerald-400 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-950">Favourable now</div>}
                 </div>
 
                 <div className="space-y-2">
@@ -543,7 +612,7 @@ export default function Destinations() {
                 )}
 
                 {/* Live Weather Forecast powered by OpenWeather */}
-                {destWeather && (
+                {destWeather && destWeather.available !== false && (
                   <div className="p-3.5 rounded-xl bg-linear-to-r from-sky-950/40 to-slate-900/60 border border-sky-800/40 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                       {destWeather.icon ? (
@@ -556,7 +625,7 @@ export default function Destinations() {
                           <span className="text-base font-bold text-white">{destWeather.temp}°C</span>
                           <span className="text-slate-300 capitalize">{destWeather.description}</span>
                         </div>
-                        <span className="text-[10px] text-sky-400 font-mono">Live Weather ({destWeather.city})</span>
+                        <span className="text-[10px] text-sky-400 font-mono">{destWeather.source || 'Weather source'} ({destWeather.city})</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-4 text-[11px] text-slate-400">
@@ -565,6 +634,34 @@ export default function Destinations() {
                     </div>
                   </div>
                 )}
+                {destWeather && destWeather.available === false && (
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3 text-xs text-slate-500">
+                    Current weather is unavailable because no live weather source returned data.
+                  </div>
+                )}
+
+                <section className="space-y-4 border-t border-slate-800 pt-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h3 className="text-xl font-serif font-bold text-white">Tourist Reviews & Ratings</h3>
+                      <div className="mt-2 flex items-center gap-2 text-sm text-slate-300">
+                        <span className="flex items-center gap-1 text-amber-300"><Star size={15} fill="currentColor" /> {publicReviews?.summary?.averageRating ? publicReviews.summary.averageRating.toFixed(1) : 'No rating yet'}</span>
+                        <span className="text-slate-500">({publicReviews?.summary?.totalReviews || 0} published reviews)</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <select value={reviewQuery.sort} onChange={(event) => setReviewQuery((current) => ({ ...current, sort: event.target.value, page: 1 }))} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-[10px] text-slate-300">
+                        <option value="newest">Newest</option><option value="oldest">Oldest</option><option value="highest">Highest rated</option><option value="lowest">Lowest rated</option>
+                      </select>
+                      <select value={reviewQuery.rating} onChange={(event) => setReviewQuery((current) => ({ ...current, rating: event.target.value, page: 1 }))} className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-[10px] text-slate-300">
+                        <option value="">All stars</option>{[5, 4, 3, 2, 1].map((value) => <option key={value} value={value}>{value} stars</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {publicReviews?.summary?.totalReviews > 0 && <div className="grid grid-cols-5 gap-1">{[5, 4, 3, 2, 1].map((value) => <div key={value} className="rounded-lg bg-slate-950/60 p-2 text-center text-[10px] text-slate-400"><span className="block text-amber-300">{value}★</span>{publicReviews.summary.ratingDistribution?.[value] || 0}</div>)}</div>}
+                  {reviewsLoading ? <p className="text-sm text-slate-500">Loading published reviews...</p> : reviewsError ? <p className="text-sm text-rose-300">{reviewsError}</p> : !publicReviews?.summary?.totalReviews ? <p className="rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-500">No reviews yet. Be the first to share your experience!</p> : <div className="space-y-3">{publicReviews.reviews.map((review) => <article key={review.id} className="rounded-xl border border-slate-800 bg-slate-950/50 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-white">{review.user_name || 'Tourist'}</p><p className="text-[10px] text-slate-500">{new Date(review.created_at).toLocaleDateString()}</p></div><span className="flex items-center gap-1 text-sm text-amber-300">{review.rating} <Star size={13} fill="currentColor" /></span></div><p className="mt-3 text-sm leading-relaxed text-slate-300">{review.review_text}</p></article>)}</div>}
+                  {publicReviews?.pagination?.totalPages > 1 && <div className="flex items-center justify-between"><button disabled={reviewQuery.page <= 1} onClick={() => setReviewQuery((current) => ({ ...current, page: current.page - 1 }))} className="rounded-lg border border-slate-700 px-3 py-2 text-[10px] text-slate-300 disabled:opacity-40">Previous</button><span className="text-[10px] text-slate-500">Page {publicReviews.pagination.page} of {publicReviews.pagination.totalPages}</span><button disabled={reviewQuery.page >= publicReviews.pagination.totalPages} onClick={() => setReviewQuery((current) => ({ ...current, page: current.page + 1 }))} className="rounded-lg border border-slate-700 px-3 py-2 text-[10px] text-slate-300 disabled:opacity-40">Next</button></div>}
+                </section>
 
                 {/* Actions */}
                 <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-slate-800">

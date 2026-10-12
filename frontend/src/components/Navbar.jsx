@@ -60,8 +60,9 @@ export default function Navbar() {
 
         {/* Right side role / login CTA */}
         <div className="hidden items-center gap-3 lg:flex">
-          {isAuthenticated && role === 'tourist' && <Link to="/marketplace?cart=1" title="Open cart" className="relative p-2 text-slate-300 hover:text-amber-400 transition">
-            <ShoppingBag size={18} />
+          {isAuthenticated && role === 'tourist' && <Link to="/marketplace?cart=1" title="Open cart" className="relative flex items-center gap-2 rounded-full border border-[#b64e32]/35 px-3 py-2 text-xs font-bold uppercase tracking-wider text-[#365246] hover:border-[#b64e32] hover:text-[#b64e32] transition">
+            <ShoppingBag size={18} aria-hidden="true" />
+            <span>Cart</span>
             {cartCount > 0 && <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[9px] font-bold text-slate-950">{cartCount}</span>}
           </Link>}
           {isAuthenticated ? (

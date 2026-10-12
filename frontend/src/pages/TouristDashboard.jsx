@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
+import { getProfileInterests } from '../utils/profileInterests';
 import { io } from 'socket.io-client';
 import { 
   Compass, 
@@ -18,13 +19,14 @@ import {
   Bus,
   Lock,
   Heart,
-  ShoppingBag,
+  ClipboardList,
   Sliders,
   Check,
   AlertTriangle,
   ShieldAlert,
   TrainFront,
-  X
+  X,
+  Trash2
 } from 'lucide-react';
 
 const TOURIST_INTERESTS = [
@@ -39,15 +41,6 @@ const TOURIST_INTERESTS = [
 
 const interestLabels = Object.fromEntries(TOURIST_INTERESTS);
 
-function preferenceInterests(preferences) {
-  const interests = preferences?.interests;
-  if (Array.isArray(interests)) return interests;
-  if (typeof interests === 'string') {
-    try { return JSON.parse(interests); } catch { return interests.split(',').map((item) => item.trim()).filter(Boolean); }
-  }
-  return [];
-}
-
 export default function TouristDashboard() {
   const { user } = useAuth();
   const [dashboardData, setDashboardData] = useState(null);
@@ -56,11 +49,13 @@ export default function TouristDashboard() {
 
   // Review submission state
   const [selectedDestId, setSelectedDestId] = useState('');
+  const [reviewBooking, setReviewBooking] = useState(null);
   const [rating, setRating] = useState(5);
   const [reviewText, setReviewText] = useState('');
   const [sentimentResult, setSentimentResult] = useState(null);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewSuccessMsg, setReviewSuccessMsg] = useState('');
+  const [deletingReviewId, setDeletingReviewId] = useState(null);
 
   // Preferences update state
   const [isPrefModalOpen, setIsPrefModalOpen] = useState(false);
@@ -69,7 +64,7 @@ export default function TouristDashboard() {
     travelDuration: 4,
     startingLocation: 'Ranchi',
     groupType: 'family',
-    interests: ['nature']
+    interests: []
   });
   const [prefSaving, setPrefSaving] = useState(false);
   const [prefSavedMsg, setPrefSavedMsg] = useState('');
@@ -81,6 +76,10 @@ export default function TouristDashboard() {
   const [liveVehicles, setLiveVehicles] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [dismissedAlertId, setDismissedAlertId] = useState(null);
+  const [recommendationData, setRecommendationData] = useState(null);
+  const [recommendationLoading, setRecommendationLoading] = useState(false);
+  const [completionCandidate, setCompletionCandidate] = useState(null);
+  const [completionSaving, setCompletionSaving] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -102,9 +101,7 @@ export default function TouristDashboard() {
             travelDuration: dashRes.tourist.preferences.travel_duration || 4,
             startingLocation: dashRes.tourist.preferences.starting_location || 'Ranchi',
             groupType: dashRes.tourist.preferences.group_type || 'family',
-            interests: preferenceInterests(dashRes.tourist.preferences).length
-              ? preferenceInterests(dashRes.tourist.preferences)
-              : ['nature']
+            interests: getProfileInterests(dashRes)
           });
         }
       }
@@ -115,12 +112,36 @@ export default function TouristDashboard() {
           setSelectedDestId(destRes.data[0].id);
         }
       }
+      const savedPreferences = dashRes?.tourist?.preferences || {};
+      if (dashRes?.personalizedRecommendations?.success) {
+        setRecommendationData(dashRes.personalizedRecommendations);
+      } else {
+        setRecommendationLoading(true);
+        try {
+          const recommendationRes = await api.recommendations.get({
+            budget: savedPreferences.budget,
+            travelDuration: savedPreferences.travel_duration,
+            interests: savedPreferences.interests,
+            groupType: savedPreferences.group_type,
+            startingLocation: savedPreferences.starting_location,
+            limit: 6
+          });
+          setRecommendationData(recommendationRes);
+        } catch (recommendationError) {
+          console.warn('Recommendation lookup failed:', recommendationError);
+          setRecommendationData(null);
+        } finally {
+          setRecommendationLoading(false);
+        }
+      }
       const [vehicleRes, alertRes] = await Promise.all([
         api.transport.getLiveVehicles().catch(() => ({ vehicles: [] })),
         api.transport.getAlerts().catch(() => ({ alerts: [] }))
       ]);
       setLiveVehicles(vehicleRes?.vehicles || []);
-      setAlerts(alertRes?.alerts || []);
+      // Quality flags contain internal review diagnostics for administrators,
+      // not public travel advisories for tourists.
+      setAlerts((alertRes?.alerts || []).filter((alert) => alert.type !== 'Quality Flag'));
     } catch (err) {
       console.warn('Dashboard fetch error:', err);
     } finally {
@@ -147,12 +168,18 @@ export default function TouristDashboard() {
 
   const handleReviewSubmit = async (e) => {
     e.preventDefault();
-    if (!reviewText.trim() || !selectedDestId) return;
+    if (!reviewText.trim() || (!selectedDestId && !reviewBooking)) return;
     setReviewSubmitting(true);
     setReviewSuccessMsg('');
     try {
       const destObj = destinations.find(d => d.id === selectedDestId);
-      const res = await api.sentiment.submitReview({
+      const res = await api.sentiment.submitReview(reviewBooking ? {
+        bookingId: reviewBooking.id,
+        productId: reviewBooking.item_id,
+        productName: reviewBooking.item_title,
+        rating,
+        reviewText
+      } : {
         targetType: 'destination',
         targetId: selectedDestId,
         destinationId: selectedDestId,
@@ -162,12 +189,34 @@ export default function TouristDashboard() {
       });
       setSentimentResult(res);
       setReviewText('');
+      setReviewBooking(null);
       setReviewSuccessMsg('Your review was analyzed and added to the official sentiment ledger!');
       await loadData();
     } catch (err) {
       alert(err.message);
     } finally {
       setReviewSubmitting(false);
+    }
+  };
+
+  const handleDeleteReview = async (review) => {
+    if (!window.confirm('Delete this review permanently? This cannot be undone.')) return;
+    setDeletingReviewId(review.id);
+    try {
+      await api.sentiment.deleteReview(review.id);
+      setDashboardData((current) => current ? {
+        ...current,
+        reviews: (current.reviews || []).filter((item) => item.id !== review.id),
+        stats: {
+          ...current.stats,
+          reviewsSubmitted: Math.max(0, Number(current.stats?.reviewsSubmitted || 0) - 1)
+        }
+      } : current);
+      setReviewSuccessMsg('Your review was deleted successfully.');
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setDeletingReviewId(null);
     }
   };
 
@@ -183,6 +232,20 @@ export default function TouristDashboard() {
       alert(err.message);
     } finally {
       setPrefSaving(false);
+    }
+  };
+
+  const handleCompleteBooking = async () => {
+    if (!completionCandidate) return;
+    setCompletionSaving(true);
+    try {
+      await api.tourist.completeBooking(completionCandidate.id);
+      setCompletionCandidate(null);
+      await loadData();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setCompletionSaving(false);
     }
   };
 
@@ -231,10 +294,13 @@ export default function TouristDashboard() {
   };
 
   const bookings = dashboardData?.bookings || [];
+  const activeBookings = bookings.filter((booking) => booking.status !== 'completed');
+  const completedBookings = bookings.filter((booking) => booking.status === 'completed');
+  const today = new Date().toISOString().slice(0, 10);
   const reviews = dashboardData?.reviews || [];
   const recommendations = dashboardData?.recommendations || [];
   const preferences = dashboardData?.tourist?.preferences || {};
-  const interests = preferenceInterests(preferences);
+  const interests = getProfileInterests(preferences);
   const savedDestinationIds = new Set(
     (dashboardData?.favourites || [])
       .filter((favourite) => favourite.target_type === 'destination')
@@ -264,7 +330,7 @@ export default function TouristDashboard() {
     budget: preferences.budget || 25000,
     travelers: preferences.group_size || 2,
     startCity: preferences.starting_location || 'Ranchi',
-    interests: interests.length ? interests : ['nature']
+    interests
   };
 
   return (
@@ -326,6 +392,13 @@ export default function TouristDashboard() {
           </div>
 
           <div className="flex flex-wrap gap-3">
+            <Link
+              to="#bookings"
+              className="inline-flex items-center gap-2 rounded-full border border-amber-400/50 bg-amber-400/10 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-amber-300 hover:bg-amber-400 hover:text-slate-950 transition"
+            >
+              <ClipboardList size={15} />
+              My Orders
+            </Link>
             <button
               onClick={() => { setProfileMessage(''); setIsProfileModalOpen(true); }}
               className="px-4 py-2.5 rounded-full bg-slate-900 border border-slate-700 text-slate-200 font-semibold text-xs uppercase tracking-wider hover:border-amber-400 transition"
@@ -369,7 +442,7 @@ export default function TouristDashboard() {
             ['Explore Destinations', '/destinations', Compass],
             ['Plan Trip', '/ai-planner', Sparkles],
             ['Saved Places', '#saved-places', Heart],
-            ['My Trips', '#bookings', Calendar],
+            ['My Orders', '#bookings', ClipboardList],
             ['Safety Center', '#safety-center', ShieldAlert],
             ['Live Transit', '/transport', Bus]
           ].map(([label, href, Icon]) => href.startsWith('#') ? <a key={label} href={href} className="flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-[#0b1326] px-3 py-3 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:border-amber-400 hover:text-white"><Icon size={14} />{label}</a> : <Link key={label} to={href} className="flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-[#0b1326] px-3 py-3 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:border-amber-400 hover:text-white"><Icon size={14} />{label}</Link>)}
@@ -476,6 +549,54 @@ export default function TouristDashboard() {
               <p className="mt-5 rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500">No destinations saved yet. Save places while exploring destinations to see them here.</p>
             )}
           </section>
+          <section className="rounded-3xl border border-slate-800 bg-[#0b1326] p-6">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-[0.2em] text-amber-400">BirsaAI recommendations</span>
+                <h2 className="mt-2 text-xl font-serif font-bold text-white">Picked for your profile</h2>
+              </div>
+              <Sparkles className="mt-1 text-amber-300" size={18} />
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-slate-400">
+              Ranked from active destinations, available experiences, marketplace stock, ratings, and stored review sentiment.
+            </p>
+            {recommendationLoading ? (
+              <div className="mt-5 space-y-3" aria-live="polite">
+                {[1, 2, 3].map((item) => <div key={item} className="h-14 animate-pulse rounded-xl bg-slate-800/70" />)}
+              </div>
+            ) : recommendationData?.recommendations?.length ? (
+              <div className="mt-5 space-y-3">
+                {recommendationData.recommendations.slice(0, 4).map((recommendation) => (
+                  <div key={`${recommendation.type}-${recommendation.id}`} className="rounded-xl border border-slate-700/70 bg-slate-900/50 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-white">{recommendation.name}</p>
+                        <p className="mt-1 text-[11px] text-slate-400">{recommendation.reasons[0]}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full border border-amber-400/35 bg-amber-400/10 px-2 py-1 text-[10px] font-bold text-amber-200">
+                        {recommendation.score}%
+                      </span>
+                    </div>
+                    <Link
+                      to={recommendation.type === 'destination' ? '/destinations' : '/marketplace'}
+                      onClick={() => api.recommendations.interact({
+                        recommendationId: recommendation.id,
+                        recommendationType: recommendation.type,
+                        action: 'view'
+                      }).catch(() => {})}
+                      className="mt-2 text-[10px] font-bold uppercase tracking-wider text-amber-300 hover:text-white"
+                    >
+                      Explore related listings
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-5 rounded-xl border border-dashed border-slate-700 p-4 text-xs text-slate-400">
+                Recommendations will appear when active catalogue items are available.
+              </p>
+            )}
+          </section>
         </div>
 
         <section className="grid lg:grid-cols-2 gap-6">
@@ -509,7 +630,7 @@ export default function TouristDashboard() {
             </Link>
           </div>
 
-          {bookings.length === 0 ? (
+          {activeBookings.length === 0 ? (
             <div className="p-12 rounded-3xl bg-[#0b1326] border border-slate-800 text-center space-y-4">
               <Wallet className="w-12 h-12 text-slate-600 mx-auto" />
               <h3 className="text-lg font-serif text-slate-200">No Active Bookings Available</h3>
@@ -533,13 +654,13 @@ export default function TouristDashboard() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {bookings.map((b) => (
+              {activeBookings.map((b) => (
                 <div key={b.id} className="p-6 rounded-3xl bg-[#0b1326] border border-slate-800 space-y-4">
                   <div className="flex items-start justify-between">
                     <div>
                       <span className="text-[10px] font-mono text-slate-400 block mb-1">{b.id}</span>
-                      <h3 className="text-lg font-bold text-white">{b.title}</h3>
-                      <p className="text-xs text-slate-400 mt-0.5">Booking Date: {new Date(b.created_at).toLocaleDateString()}</p>
+                      <h3 className="text-lg font-bold text-white">{b.item_title || b.title || 'Journey booking'}</h3>
+                      <p className="text-xs text-slate-400 mt-0.5">Trip: {b.check_in_date || '—'} to {b.check_out_date || '—'}</p>
                     </div>
                     <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${
                       b.escrow_status === 'released'
@@ -564,18 +685,78 @@ export default function TouristDashboard() {
                       <span className="text-lg font-bold text-amber-400">₹{(b.total_amount || 0).toLocaleString('en-IN')}</span>
                     </div>
 
-                    <Link
-                      to={`/verify`}
-                      className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-semibold text-slate-300 hover:border-amber-400 hover:text-white transition"
-                    >
-                      Audit Ledger
-                    </Link>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {b.status === 'confirmed' && b.check_out_date && String(b.check_out_date).slice(0, 10) <= today && (
+                        <button
+                          type="button"
+                          onClick={() => setCompletionCandidate(b)}
+                          className="px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs font-semibold text-emerald-300 hover:border-emerald-300 transition"
+                        >
+                          Mark Trip as Completed
+                        </button>
+                      )}
+                      <Link
+                        to="/verify"
+                        className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-semibold text-slate-300 hover:border-amber-400 hover:text-white transition"
+                      >
+                        Audit Ledger
+                      </Link>
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
           )}
         </div>
+
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-2xl font-serif font-bold">Completed Trips</h2>
+            <p className="text-xs text-slate-400 mt-1">Journeys you have confirmed as completed.</p>
+          </div>
+          {completedBookings.length === 0 ? (
+            <div className="rounded-2xl border border-slate-800 bg-[#0b1326] p-6 text-sm text-slate-500">No completed trips yet.</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {completedBookings.map((booking) => (
+                <div key={booking.id} className="p-6 rounded-3xl bg-[#0b1326] border border-emerald-800/40 space-y-3">
+                  <span className="text-[10px] font-mono text-slate-400">{booking.id}</span>
+                  <h3 className="text-lg font-bold text-white">{booking.item_title || booking.title || 'Completed journey'}</h3>
+                  <p className="text-xs text-slate-400">Trip: {booking.check_in_date || '—'} to {booking.check_out_date || '—'}</p>
+                  <p className="text-xs text-emerald-300">Completed: {booking.settled_at ? new Date(booking.settled_at).toLocaleString() : 'Recorded'}</p>
+                  {booking.item_type === 'product' && (
+                    <a
+                      href="#review-section"
+                      onClick={() => setReviewBooking(booking)}
+                      className="inline-flex items-center rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-xs font-semibold text-amber-300 hover:border-amber-300"
+                    >
+                      Write a Review
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {completionCandidate && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4" role="dialog" aria-modal="true" aria-labelledby="completion-dialog-title">
+            <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b1326] p-6 shadow-2xl">
+              <h2 id="completion-dialog-title" className="text-xl font-serif font-bold text-white">Have you completed this journey?</h2>
+              <p className="mt-3 text-sm leading-relaxed text-slate-300">
+                Confirming moves this journey into Completed Trips. This does not automatically submit a review.
+              </p>
+              <div className="mt-6 flex justify-end gap-3">
+                <button type="button" onClick={() => setCompletionCandidate(null)} disabled={completionSaving} className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:border-slate-500">
+                  Cancel
+                </button>
+                <button type="button" onClick={handleCompleteBooking} disabled={completionSaving} className="rounded-xl bg-emerald-400 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-300">
+                  {completionSaving ? 'Completing…' : 'Confirm Completion'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Section: Real-Time Feedback & Sentiment Analysis Pipeline */}
         <div id="review-section" className="bg-[#0b1326] border border-slate-800 rounded-3xl p-8 space-y-6 scroll-mt-32">
@@ -584,26 +765,26 @@ export default function TouristDashboard() {
               <Sparkles size={14} />
               AI Review & Sentiment Engine (VADER + ABSA)
             </div>
-            <h2 className="text-2xl font-serif font-bold">Submit Experience Feedback</h2>
+            <h2 className="text-2xl font-serif font-bold">{reviewBooking ? `Review ${reviewBooking.item_title}` : 'Submit Experience Feedback'}</h2>
             <p className="text-xs text-slate-400 mt-1">
-              Your feedback is automatically evaluated for Aspect-Based Sentiment across 5 critical dimensions: Cleanliness, Hospitality, Transport, Food, and Safety.
+              {reviewBooking ? 'This review is linked to your completed product order and will be checked before publication.' : 'Your feedback is automatically evaluated for Aspect-Based Sentiment across 5 critical dimensions: Cleanliness, Hospitality, Transport, Food, and Safety.'}
             </p>
           </div>
 
           <form onSubmit={handleReviewSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
-              <label className="block text-xs uppercase tracking-widest text-slate-400 mb-2">Destination</label>
-              <select
-                value={selectedDestId}
-                onChange={(e) => setSelectedDestId(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-[#070b14] border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-amber-400"
-              >
-                {destinations.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name} ({d.district})
-                  </option>
-                ))}
-              </select>
+              <label className="block text-xs uppercase tracking-widest text-slate-400 mb-2">{reviewBooking ? 'Purchased product' : 'Destination'}</label>
+              {reviewBooking ? (
+                <div className="rounded-xl bg-[#070b14] border border-emerald-700/50 px-4 py-3 text-xs text-emerald-200">{reviewBooking.item_title}</div>
+              ) : (
+                <select
+                  value={selectedDestId}
+                  onChange={(e) => setSelectedDestId(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl bg-[#070b14] border border-slate-700 text-slate-100 text-xs focus:outline-none focus:border-amber-400"
+                >
+                  {destinations.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.district})</option>)}
+                </select>
+              )}
             </div>
 
             <div>
@@ -665,13 +846,19 @@ export default function TouristDashboard() {
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                {sentimentResult.review?.aspects && Object.entries(sentimentResult.review.aspects).map(([aspect, score]) => (
+                {sentimentResult.review?.aspects && Object.entries(sentimentResult.review.aspects).map(([aspect, sentiment]) => {
+                  const label = aspectSentimentLabel(sentiment);
+                  return (
                   <div key={aspect} className="p-3 rounded-xl bg-[#0b1326] border border-slate-800">
                     <span className="text-[10px] uppercase text-slate-500 block capitalize">{aspect}</span>
-                    <span className="text-sm font-bold text-white">{score} / 5.0</span>
+                    <span className={`text-sm font-bold ${label === 'Negative' ? 'text-rose-300' : label === 'Positive' ? 'text-emerald-300' : 'text-slate-300'}`}>{label}</span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
+              {(!sentimentResult.review?.aspects || Object.keys(sentimentResult.review.aspects).length === 0) && (
+                <p className="text-xs text-slate-500">No specific aspects detected.</p>
+              )}
             </div>
           )}
         </div>
@@ -684,21 +871,33 @@ export default function TouristDashboard() {
                 const aspects = rev.aspects ? (typeof rev.aspects === 'string' ? JSON.parse(rev.aspects) : rev.aspects) : {};
                 return (
                   <div key={rev.id} className="p-6 rounded-3xl bg-[#0b1326] border border-slate-800 space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-3">
                       <div>
                         <h4 className="font-bold text-white text-base">{rev.target_id}</h4>
                         <span className="text-[10px] text-slate-500">{new Date(rev.created_at).toLocaleDateString()}</span>
                       </div>
-                      <span className="text-amber-400 font-bold text-sm flex items-center gap-1">
-                        <Star size={14} className="fill-amber-400" />
-                        {rev.rating} ★
-                      </span>
+                      <div className="flex items-center gap-3">
+                        <span className="text-amber-400 font-bold text-sm flex items-center gap-1">
+                          <Star size={14} className="fill-amber-400" />
+                          {rev.rating} ★
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteReview(rev)}
+                          disabled={deletingReviewId === rev.id}
+                          className="inline-flex items-center gap-1 rounded-lg border border-rose-800/70 px-2 py-1.5 text-[10px] font-semibold text-rose-300 hover:bg-rose-950/40 disabled:cursor-not-allowed disabled:opacity-50"
+                          aria-label={`Delete review for ${rev.target_id}`}
+                        >
+                          <Trash2 size={13} />
+                          {deletingReviewId === rev.id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </div>
                     </div>
-                    <p className="text-xs text-slate-300 italic">"{rev.comment}"</p>
+                    <p className="text-xs text-slate-300 italic">"{rev.review_text || rev.comment || ''}"</p>
                     <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-800/60 text-[10px] text-slate-400">
                       {Object.entries(aspects).map(([k, v]) => (
                         <span key={k} className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800">
-                          {k}: <strong className="text-amber-400">{v}</strong>
+                          {k}: <strong className={aspectSentimentLabel(v) === 'Negative' ? 'text-rose-300' : aspectSentimentLabel(v) === 'Positive' ? 'text-emerald-300' : 'text-slate-300'}>{aspectSentimentLabel(v)}</strong>
                         </span>
                       ))}
                     </div>
@@ -843,3 +1042,12 @@ export default function TouristDashboard() {
     </div>
   );
 }
+const aspectSentimentLabel = (value) => {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') {
+    if (value >= 3.5) return 'Positive';
+    if (value <= 2.5) return 'Negative';
+    return 'Neutral';
+  }
+  return 'Unknown';
+};

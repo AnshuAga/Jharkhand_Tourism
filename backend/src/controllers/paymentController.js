@@ -21,9 +21,23 @@ function resolveItem(itemType, itemId) {
   return { item, title: item.title, amount: Number(item.price), providerId: item.provider_id };
 }
 
+function normalizeDeliveryAddress(value) {
+  if (!value || typeof value !== 'object') return null;
+  const address = {
+    address: String(value.address || '').trim(),
+    landmark: String(value.landmark || '').trim(),
+    district: String(value.district || '').trim(),
+    state: String(value.state || '').trim(),
+    pinCode: String(value.pinCode || '').trim()
+  };
+  return address.address && address.landmark && address.district && address.state && /^\d{6}$/.test(address.pinCode)
+    ? address
+    : null;
+}
+
 function bookingInput(req) {
   const {
-    itemType = 'product', itemId, travelers = 1, checkInDate, checkOutDate, days = 1
+    itemType = 'product', itemId, travelers = 1, checkInDate, checkOutDate, days = 1, deliveryAddress
   } = req.body;
   
   if (!itemId || !purchasableTypes.has(itemType)) {
@@ -32,7 +46,13 @@ function bookingInput(req) {
     throw error;
   }
   const count = Math.max(1, Number(travelers) || 1);
-  return { itemType, itemId, travelers: count, checkInDate, checkOutDate, days: Math.max(1, Number(days) || 1) };
+  const normalizedDeliveryAddress = normalizeDeliveryAddress(deliveryAddress);
+  if (itemType === 'product' && !normalizedDeliveryAddress) {
+    const error = new Error('A complete delivery location is required for craft orders.');
+    error.status = 400;
+    throw error;
+  }
+  return { itemType, itemId, travelers: count, checkInDate, checkOutDate, days: Math.max(1, Number(days) || 1), deliveryAddress: normalizedDeliveryAddress };
 }
 
 export const paymentController = {
@@ -112,7 +132,8 @@ export const paymentController = {
         travelers: input.travelers, check_in_date: input.checkInDate || new Date().toISOString().split('T')[0],
         check_out_date: input.checkOutDate || null, days: input.days, total_amount: amount,
         escrow_amount: amount, escrow_status: 'locked', contract_address: null,
-        contract_tx_hash: null, status: 'payment_pending', cancellation_reason: null
+        contract_tx_hash: null, status: 'payment_pending', cancellation_reason: null,
+        delivery_address: input.deliveryAddress ? JSON.stringify(input.deliveryAddress) : null
       });
       db.payments.create({
         id: `pay-${uuidv4().slice(0, 12)}`, booking_id: bookingId, user_id: req.user.id,

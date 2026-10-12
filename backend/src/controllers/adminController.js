@@ -4,6 +4,192 @@ import { sentimentService } from '../services/sentimentService.js';
 import { v4 as uuidv4 } from 'uuid';
 
 export const adminController = {
+  getReviews(req, res) {
+    try {
+      const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 250);
+      const reviews = db.reviews.listAll(limit);
+      res.json({ success: true, count: reviews.length, reviews });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  getReviewIntelligence(req, res) {
+    try {
+      const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 250);
+      const status = req.query.status ? String(req.query.status) : undefined;
+      const risk = req.query.risk ? String(req.query.risk) : undefined;
+      if (status && !['published', 'pending_review', 'rejected'].includes(status)) {
+        return res.status(400).json({ success: false, message: 'Invalid review status filter.' });
+      }
+      if (risk && !['low', 'medium', 'high'].includes(risk)) {
+        return res.status(400).json({ success: false, message: 'Invalid risk filter.' });
+      }
+      const stats = db.reviews.intelligenceStats();
+      const reviews = db.reviews.listAll(limit, { status, risk });
+      const allFlaggedReviews = db.reviews.listAll(10000);
+      res.json({
+        success: true,
+        stats: {
+          totalSubmitted: Number(stats.total || 0),
+          published: Number(stats.published || 0),
+          pendingReview: Number(stats.pending || 0),
+          confirmedFake: Number(stats.rejected || 0),
+          suspicious: Number(stats.suspicious || 0),
+          duplicateOrPatternFlags: allFlaggedReviews.filter((review) => (review.suspicion_reasons || []).some((reason) => !reason.startsWith('Rating-text mismatch'))).length,
+          verifiedSentimentLabels: Number(stats.verified_sentiment || 0),
+          verifiedFakeLabels: Number(stats.verified_fake || 0),
+          awaitingAnnotation: Number(stats.awaiting_annotation || 0),
+          trainingEligible: Number(stats.training_eligible || 0)
+        },
+        model: {
+          currentVersion: 'lexicon-v1',
+          detectorVersion: 'rules-v1',
+          trainingDatasetSize: Number(stats.training_eligible || 0),
+          lastTrainingDate: null,
+          evaluation: 'Not enough verified data for retraining.'
+        },
+        publicationPolicy: sentimentService.getPublicationPolicy(),
+        reviews
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  moderateReview(req, res) {
+    try {
+      const { status } = req.body || {};
+      if (!['published', 'pending_review', 'rejected'].includes(status)) {
+        return res.status(400).json({ success: false, message: 'Invalid review status.' });
+      }
+      const existing = db.reviews.findById(req.params.id);
+      if (!existing) return res.status(404).json({ success: false, message: 'Review not found.' });
+      const review = db.reviews.updateReviewIntelligence(req.params.id, {
+        review_status: status,
+        publication_status: status === 'published' ? 'published' : status === 'rejected' ? 'hidden' : 'pending',
+        verified_sentiment: existing?.verified_sentiment || null,
+        verified_fake_label: existing?.verified_fake_label || null,
+        annotation_status: existing?.annotation_status || 'unreviewed',
+        annotated_by: existing?.annotated_by || null,
+        verified_sentiment_by: existing?.verified_sentiment_by || null,
+        verified_sentiment_at: existing?.verified_sentiment_at || null,
+        verified_fake_by: existing?.verified_fake_by || null,
+        verified_fake_at: existing?.verified_fake_at || null
+      });
+      if (!review) return res.status(404).json({ success: false, message: 'Review not found.' });
+      if (review.target_type === 'destination') sentimentService.refreshDestinationRating(review.target_id);
+      return res.json({ success: true, review });
+    } catch (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+  },
+  reanalyzeReview(req, res) {
+    try {
+      const result = sentimentService.reanalyzeReview(req.params.id);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      res.status(error.message === 'Review not found.' ? 404 : 400).json({ success: false, message: error.message });
+    }
+  },
+  annotateReview(req, res) {
+    try {
+      const { verifiedSentiment, verifiedFakeLabel, note = '' } = req.body || {};
+      if (verifiedSentiment !== undefined && !['Positive', 'Neutral', 'Negative', 'Mixed'].includes(verifiedSentiment)) {
+        return res.status(400).json({ success: false, message: 'Invalid verified sentiment label.' });
+      }
+      if (verifiedFakeLabel !== undefined && !['genuine', 'fake'].includes(verifiedFakeLabel)) {
+        return res.status(400).json({ success: false, message: 'Invalid verified fake-review label.' });
+      }
+      const existing = db.reviews.findById(req.params.id);
+      if (!existing) return res.status(404).json({ success: false, message: 'Review not found.' });
+      const now = new Date().toISOString();
+      const sentimentVerification = verifiedSentiment !== undefined;
+      const authenticityVerification = verifiedFakeLabel !== undefined;
+      const authenticityDecision = verifiedFakeLabel === 'fake'
+        ? { review_status: 'rejected', publication_status: 'hidden' }
+        : verifiedFakeLabel === 'genuine' && existing.review_status === 'rejected'
+          ? { review_status: 'pending_review', publication_status: 'pending' }
+          : {};
+      const review = db.reviews.updateReviewIntelligence(req.params.id, {
+        review_status: authenticityDecision.review_status || existing.review_status || 'published',
+        publication_status: authenticityDecision.publication_status || existing.publication_status || 'published',
+        verified_sentiment: verifiedSentiment ?? existing.verified_sentiment ?? null,
+        verified_fake_label: verifiedFakeLabel ?? existing.verified_fake_label ?? null,
+        annotation_status: 'verified',
+        annotated_by: req.user.id,
+        verified_sentiment_by: sentimentVerification ? req.user.id : (existing.verified_sentiment_by || null),
+        verified_sentiment_at: sentimentVerification ? now : (existing.verified_sentiment_at || null),
+        verified_fake_by: authenticityVerification ? req.user.id : (existing.verified_fake_by || null),
+        verified_fake_at: authenticityVerification ? now : (existing.verified_fake_at || null)
+      });
+      db.reviews.addAnnotationHistory({
+        id: `annotation-${uuidv4().slice(0, 8)}`,
+        review_id: req.params.id,
+        admin_id: req.user.id,
+        verified_sentiment: review.verified_sentiment,
+        verified_fake_label: review.verified_fake_label,
+        note: String(note).slice(0, 1000)
+      });
+      return res.json({ success: true, review });
+    } catch (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+  },
+  exportTrainingReviews(req, res) {
+    try {
+      const seenTexts = new Set();
+      const records = db.reviews.listTrainingEligible(10000).filter((review) => {
+        const normalized = String(review.review_text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        if (seenTexts.has(normalized)) return false;
+        seenTexts.add(normalized);
+        return true;
+      }).map((review) => ({
+        text: review.review_text,
+        sentiment: review.verified_sentiment,
+        fake_label: review.verified_fake_label,
+        source: 'verified_tourist_review',
+        model_version: review.model_version
+      }));
+      res.json({
+        success: true,
+        format: 'jsonl',
+        count: records.length,
+        message: records.length ? undefined : 'Not enough verified data for retraining.',
+        records
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  },
+  updateReviewPublication(req, res) {
+    try {
+      const { publicationStatus } = req.body || {};
+      if (!['pending', 'published', 'hidden'].includes(publicationStatus)) {
+        return res.status(400).json({ success: false, message: 'A valid publication status is required.' });
+      }
+      const review = db.reviews.updatePublicationStatus(req.params.id, publicationStatus);
+      if (!review) return res.status(404).json({ success: false, message: 'Review not found.' });
+      if (review.target_type === 'destination') {
+        sentimentService.refreshDestinationRating(review.target_id);
+      }
+      return res.json({ success: true, review });
+    } catch (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+  },
+  deleteReview(req, res) {
+    try {
+      const review = db.reviews.findById(req.params.id);
+      if (!review) return res.status(404).json({ success: false, message: 'Review not found.' });
+
+      db.reviews.delete(req.params.id);
+      if (review.target_type === 'destination') {
+        sentimentService.refreshDestinationRating(review.target_id);
+      }
+      return res.json({ success: true, deletedReviewId: req.params.id });
+    } catch (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+  },
   createService(req, res) {
     try {
       const { title, description, category, price, district, durationDays, image, amenities, availability, isActive = true } = req.body;

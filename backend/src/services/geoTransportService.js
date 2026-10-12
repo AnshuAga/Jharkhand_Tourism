@@ -88,6 +88,13 @@ function pathToProgress(points, progress) {
 
 const DEMO_METRICS = new Map(DEMO_ROUTES.map((route) => [route.id, routeMetrics(route)]));
 
+function liveVehicles(now = Date.now()) {
+  return [
+    ...DEMO_ROUTES.map((route) => demoVehicle(route, now)),
+    ...db.transport.listVehicles().map((vehicle) => ({ ...vehicle, source: 'telemetry', demo: false }))
+  ];
+}
+
 function demoVehicle(route, now = Date.now()) {
   const metrics = DEMO_METRICS.get(route.id);
   const elapsed = demoState.elapsedMs + (demoState.running ? now - demoState.startedAt : 0);
@@ -255,7 +262,7 @@ export const geoTransportService = {
    * Strictly returns live database vehicles reporting telemetry within the past 30 mins
    */
   getLiveVehicles() {
-    return [...DEMO_ROUTES.map((route) => demoVehicle(route)), ...db.transport.listVehicles().map((vehicle) => ({ ...vehicle, source: 'telemetry', demo: false }))];
+    return liveVehicles();
   },
 
   getDemoStatus() {
@@ -266,7 +273,7 @@ export const geoTransportService = {
       updatedAt: new Date(now).toISOString(),
       source: 'demo',
       demo: true,
-      vehicles: DEMO_ROUTES.map((route) => demoVehicle(route, now))
+      vehicles: liveVehicles(now)
     };
   },
 

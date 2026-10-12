@@ -22,6 +22,7 @@ import touristRoutes from './src/routes/touristRoutes.js';
 import weatherRoutes from './src/routes/weatherRoutes.js';
 import paymentRoutes from './src/routes/paymentRoutes.js';
 import enquiryRoutes from './src/routes/enquiryRoutes.js';
+import recommendationRoutes from './src/routes/recommendationRoutes.js';
 
 import { geoTransportService } from './src/services/geoTransportService.js';
 
@@ -74,6 +75,7 @@ app.use('/api/tourist', touristRoutes);
 app.use('/api/weather', weatherRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/enquiries', enquiryRoutes);
+app.use('/api/recommendations', recommendationRoutes);
 // Marketplace-scoped aliases preserve the natural API shape for existing clients.
 app.use('/api/marketplace/payments', paymentRoutes);
 app.use('/api/marketplace/payment', paymentRoutes);

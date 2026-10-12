@@ -64,6 +64,18 @@ export const api = {
   itinerary: {
     plan: (preferences) => request('/itinerary/plan', { method: 'POST', body: JSON.stringify(preferences) })
   },
+  recommendations: {
+    get: (preferences = {}) => {
+      const params = new URLSearchParams();
+      Object.entries(preferences).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          params.set(key, Array.isArray(value) ? value.join(',') : value);
+        }
+      });
+      return request(`/recommendations?${params.toString()}`);
+    },
+    interact: (data) => request('/recommendations/interactions', { method: 'POST', body: JSON.stringify(data) })
+  },
   enquiries: {
     create: (enquiry) => request('/enquiries', { method: 'POST', body: JSON.stringify(enquiry) })
   },
@@ -146,7 +158,11 @@ export const api = {
     analyze: (text, rating) => request('/sentiment/analyze', { method: 'POST', body: JSON.stringify({ text, rating }) }),
     submitReview: (reviewData) => request('/sentiment/review', { method: 'POST', body: JSON.stringify(reviewData) }),
     getReviews: (params = '') => request(`/sentiment/reviews${params}`),
-    getAnalytics: () => request('/sentiment/analytics')
+    getPublicReviews: (destinationId, params = '') => request(`/sentiment/reviews?destinationId=${encodeURIComponent(destinationId)}${params ? `&${params}` : ''}`),
+    getAnalytics: (destinationId = '') => request(`/sentiment/analytics${destinationId ? `?destinationId=${encodeURIComponent(destinationId)}` : ''}`),
+    getSyntheticDataset: (sampleId = '') => request(`/sentiment/synthetic-dataset${sampleId ? `?sampleId=${encodeURIComponent(sampleId)}` : ''}`),
+    updateReview: (id, reviewData) => request(`/sentiment/reviews/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(reviewData) }),
+    deleteReview: (id) => request(`/sentiment/reviews/${encodeURIComponent(id)}`, { method: 'DELETE' })
   },
   transport: {
     getMapConfig: () => request('/transport/map-config'),
@@ -165,6 +181,15 @@ export const api = {
   },
   admin: {
     getAnalytics: () => request('/admin/analytics'),
+    getRecommendationAnalytics: () => request('/recommendations/analytics'),
+    getReviews: () => request('/admin/reviews'),
+    getReviewIntelligence: (params = '') => request(`/admin/reviews/intelligence${params ? `?${params}` : ''}`),
+    exportTrainingReviews: () => request('/admin/reviews/training-export'),
+    moderateReview: (id, status) => request(`/admin/reviews/${encodeURIComponent(id)}/moderation`, { method: 'PUT', body: JSON.stringify({ status }) }),
+    reanalyzeReview: (id) => request(`/admin/reviews/${encodeURIComponent(id)}/detection`, { method: 'POST' }),
+    annotateReview: (id, labels) => request(`/admin/reviews/${encodeURIComponent(id)}/annotation`, { method: 'PUT', body: JSON.stringify(labels) }),
+    updateReviewPublication: (id, publicationStatus) => request(`/admin/reviews/${encodeURIComponent(id)}/publication`, { method: 'PUT', body: JSON.stringify({ publicationStatus }) }),
+    deleteReview: (id) => request(`/admin/reviews/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     getEnquiries: () => request('/admin/enquiries'),
     createService: (serviceData) => request('/admin/services', { method: 'POST', body: JSON.stringify(serviceData) }),
     getServices: (params = '') => request(`/admin/services${params}`),
@@ -188,6 +213,7 @@ export const api = {
   tourist: {
     getDashboard: () => request('/tourist/dashboard'),
     updatePreferences: (prefData) => request('/tourist/preferences', { method: 'PUT', body: JSON.stringify(prefData) }),
+    completeBooking: (bookingId) => request(`/tourist/bookings/${encodeURIComponent(bookingId)}/complete`, { method: 'POST' }),
     toggleFavourite: (targetType, targetId) => request('/tourist/favourites', { method: 'POST', body: JSON.stringify({ targetType, targetId }) }),
     getFavourites: () => request('/tourist/favourites')
   }

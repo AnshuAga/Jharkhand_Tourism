@@ -28,5 +28,13 @@ router.post('/guides/:providerId/revoke', adminController.revokeKYC);
 // Bookings & Payments Oversight
 router.get('/bookings', adminController.getBookings);
 router.get('/payments', adminController.getPayments);
+router.get('/reviews', adminController.getReviews);
+router.get('/reviews/intelligence', adminController.getReviewIntelligence);
+router.get('/reviews/training-export', adminController.exportTrainingReviews);
+router.put('/reviews/:id/moderation', adminController.moderateReview);
+router.post('/reviews/:id/detection', adminController.reanalyzeReview);
+router.put('/reviews/:id/annotation', adminController.annotateReview);
+router.put('/reviews/:id/publication', adminController.updateReviewPublication);
+router.delete('/reviews/:id', adminController.deleteReview);
 
 export default router;

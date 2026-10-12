@@ -38,6 +38,59 @@ sqlite.exec(`
     PRIMARY KEY (booking_id, service_id)
   )
 `);
+try { sqlite.exec("ALTER TABLE bookings ADD COLUMN delivery_address TEXT"); } catch { /* column already exists */ }
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS recommendation_interactions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recommendation_id TEXT NOT NULL,
+    recommendation_type TEXT NOT NULL,
+    action TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_recommendation_interactions_user
+    ON recommendation_interactions(user_id, created_at);
+`);
+try { sqlite.exec("ALTER TABLE reviews ADD COLUMN publication_status TEXT NOT NULL DEFAULT 'published' CHECK(publication_status IN ('pending','published','hidden'))"); } catch { /* column already exists */ }
+for (const column of [
+  "review_status TEXT NOT NULL DEFAULT 'published' CHECK(review_status IN ('published','pending_review','rejected'))",
+  "model_version TEXT NOT NULL DEFAULT 'lexicon-v1'",
+  "detector_version TEXT NOT NULL DEFAULT 'rules-v1'",
+  "suspicion_score REAL NOT NULL DEFAULT 0",
+  "suspicion_reasons TEXT NOT NULL DEFAULT '[]'",
+  "risk_category TEXT NOT NULL DEFAULT 'low'",
+  "detection_analyzed_at DATETIME",
+  "verified_sentiment TEXT",
+  "verified_fake_label TEXT",
+  "annotation_status TEXT NOT NULL DEFAULT 'unreviewed'",
+  "annotated_by TEXT",
+  "annotated_at DATETIME",
+  "verified_sentiment_by TEXT",
+  "verified_sentiment_at DATETIME",
+  "verified_fake_by TEXT",
+  "verified_fake_at DATETIME"
+]) {
+  try { sqlite.exec(`ALTER TABLE reviews ADD COLUMN ${column}`); } catch { /* column already exists */ }
+}
+sqlite.exec('CREATE INDEX IF NOT EXISTS idx_reviews_publication ON reviews(target_type, target_id, publication_status)');
+sqlite.exec('CREATE INDEX IF NOT EXISTS idx_reviews_user_target ON reviews(user_id, target_type, target_id, created_at)');
+sqlite.exec('CREATE INDEX IF NOT EXISTS idx_reviews_risk ON reviews(risk_category, review_status)');
+sqlite.exec(`
+  UPDATE reviews
+  SET review_status = 'pending_review', publication_status = 'pending'
+  WHERE verified_fake_label = 'genuine' AND review_status = 'rejected'
+`);
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS review_annotation_history (
+    id TEXT PRIMARY KEY,
+    review_id TEXT NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+    admin_id TEXT NOT NULL REFERENCES users(id),
+    verified_sentiment TEXT,
+    verified_fake_label TEXT,
+    note TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
 // Older installations predate destination bookings. Rebuild the small bookings
 // table when necessary so the CHECK constraint matches the current schema.
 try {
@@ -140,11 +193,18 @@ try {
         user_id TEXT NOT NULL REFERENCES users(id), user_name TEXT NOT NULL,
         target_type TEXT NOT NULL CHECK(target_type IN ('destination','provider','product','service')),
         target_id TEXT NOT NULL, rating REAL NOT NULL CHECK(rating >= 1.0 AND rating <= 5.0),
-        review_text TEXT NOT NULL, sentiment TEXT NOT NULL CHECK(sentiment IN ('Positive','Neutral','Negative')),
+        review_text TEXT NOT NULL, sentiment TEXT NOT NULL CHECK(sentiment IN ('Positive','Neutral','Negative','Mixed')),
         compound_score REAL NOT NULL, emotion TEXT DEFAULT 'Neutral', aspects TEXT NOT NULL,
-        is_flagged INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        is_flagged INTEGER DEFAULT 0, publication_status TEXT NOT NULL DEFAULT 'published' CHECK(publication_status IN ('pending','published','hidden')),
+        review_status TEXT NOT NULL DEFAULT 'published', model_version TEXT NOT NULL DEFAULT 'lexicon-v1',
+        suspicion_score REAL NOT NULL DEFAULT 0, suspicion_reasons TEXT NOT NULL DEFAULT '[]',
+        verified_sentiment TEXT, verified_fake_label TEXT, annotation_status TEXT NOT NULL DEFAULT 'unreviewed',
+        annotated_by TEXT, annotated_at DATETIME, verified_sentiment_by TEXT,
+        verified_sentiment_at DATETIME, verified_fake_by TEXT, verified_fake_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
-      INSERT INTO reviews SELECT id, booking_id, user_id, user_name, target_type, target_id, rating, review_text, sentiment, compound_score, emotion, aspects, is_flagged, created_at FROM reviews_legacy;
+      INSERT INTO reviews (id, booking_id, user_id, user_name, target_type, target_id, rating, review_text, sentiment, compound_score, emotion, aspects, is_flagged, publication_status, created_at)
+        SELECT id, booking_id, user_id, user_name, target_type, target_id, rating, review_text, sentiment, compound_score, emotion, aspects, is_flagged, 'published', created_at FROM reviews_legacy;
       DROP TABLE reviews_legacy;
       CREATE INDEX IF NOT EXISTS idx_payments_booking ON payments(booking_id);
       CREATE INDEX IF NOT EXISTS idx_reviews_target ON reviews(target_type, target_id);
@@ -158,6 +218,42 @@ try {
 } catch (dependentMigrationError) {
   sqlite.pragma('foreign_keys = ON');
   console.warn('[Database] Dependent booking migration skipped:', dependentMigrationError.message);
+}
+// Add Mixed to installations created before mixed sentiment was introduced.
+try {
+  const reviewSql = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reviews'").get()?.sql || '';
+  if (reviewSql && !reviewSql.includes("'Mixed'")) {
+    sqlite.pragma('foreign_keys = OFF');
+    sqlite.exec(`
+      ALTER TABLE reviews RENAME TO reviews_sentiment_legacy;
+      CREATE TABLE reviews (
+        id TEXT PRIMARY KEY, booking_id TEXT REFERENCES bookings(id),
+        user_id TEXT NOT NULL REFERENCES users(id), user_name TEXT NOT NULL,
+        target_type TEXT NOT NULL CHECK(target_type IN ('destination','provider','product','service')),
+        target_id TEXT NOT NULL, rating REAL NOT NULL CHECK(rating >= 1.0 AND rating <= 5.0),
+        review_text TEXT NOT NULL,
+        sentiment TEXT NOT NULL CHECK(sentiment IN ('Positive','Neutral','Negative','Mixed')),
+        compound_score REAL NOT NULL, emotion TEXT DEFAULT 'Neutral', aspects TEXT NOT NULL,
+        is_flagged INTEGER DEFAULT 0, publication_status TEXT NOT NULL DEFAULT 'published' CHECK(publication_status IN ('pending','published','hidden')),
+        review_status TEXT NOT NULL DEFAULT 'published', model_version TEXT NOT NULL DEFAULT 'lexicon-v1',
+        suspicion_score REAL NOT NULL DEFAULT 0, suspicion_reasons TEXT NOT NULL DEFAULT '[]',
+        verified_sentiment TEXT, verified_fake_label TEXT, annotation_status TEXT NOT NULL DEFAULT 'unreviewed',
+        annotated_by TEXT, annotated_at DATETIME, verified_sentiment_by TEXT,
+        verified_sentiment_at DATETIME, verified_fake_by TEXT, verified_fake_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO reviews SELECT id, booking_id, user_id, user_name, target_type, target_id, rating,
+        review_text, sentiment, compound_score, emotion, aspects, is_flagged, publication_status, created_at
+        FROM reviews_sentiment_legacy;
+      DROP TABLE reviews_sentiment_legacy;
+      CREATE INDEX IF NOT EXISTS idx_reviews_target ON reviews(target_type, target_id);
+      CREATE INDEX IF NOT EXISTS idx_reviews_sentiment ON reviews(sentiment);
+    `);
+    sqlite.pragma('foreign_keys = ON');
+  }
+} catch (reviewMigrationError) {
+  sqlite.pragma('foreign_keys = ON');
+  console.warn('[Database] Review sentiment migration skipped:', reviewMigrationError.message);
 }
 try { sqlite.exec('ALTER TABLE users ADD COLUMN profile_image TEXT'); } catch { /* column already exists */ }
 try { sqlite.exec("ALTER TABLE tourist_profiles ADD COLUMN nationality TEXT DEFAULT 'Indian'"); } catch { /* column already exists */ }
@@ -211,6 +307,21 @@ export function safeJSONParse(str, fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+function withPublishedReviewSummary(destination) {
+  const summary = sqlite.prepare(`
+    SELECT COUNT(*) AS review_count, AVG(rating) AS average_rating
+    FROM reviews
+    WHERE target_type = 'destination' AND target_id = ?
+      AND publication_status = 'published' AND review_status = 'published'
+      AND COALESCE(verified_fake_label, '') != 'fake'
+  `).get(destination.id);
+  return {
+    ...destination,
+    rating: summary.review_count ? Math.round(Number(summary.average_rating) * 10) / 10 : 0,
+    review_count: Number(summary.review_count || 0)
+  };
 }
 
 // Transaction wrapper helper
@@ -575,20 +686,24 @@ export const db = {
         )`;
         params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
       }
-      query += ' ORDER BY rating DESC, review_count DESC';
-      return sqlite.prepare(query).all(...params).map(r => ({
+      query += ' ORDER BY name ASC';
+      return sqlite.prepare(query).all(...params).map((row) => {
+        const r = withPublishedReviewSummary(row);
+        return {
         ...r,
         attractions: safeJSONParse(r.attractions, []),
         activities: safeJSONParse(r.activities, []),
         nearby_hotels: safeJSONParse(r.nearby_hotels, []),
         interests: safeJSONParse(r.interests, [])
-      }));
+        };
+      });
     },
     findById: (id) => {
       const row = sqlite.prepare('SELECT * FROM destinations WHERE id = ? OR slug = ?').get(id, id);
       if (!row) return null;
+      const destination = withPublishedReviewSummary(row);
       return {
-        ...row,
+        ...destination,
         attractions: safeJSONParse(row.attractions, []),
         activities: safeJSONParse(row.activities, []),
         nearby_hotels: safeJSONParse(row.nearby_hotels, []),
@@ -686,7 +801,22 @@ export const db = {
       }
       query += ' ORDER BY pr.created_at DESC LIMIT ?';
       params.push(limit);
-      return sqlite.prepare(query).all(...params);
+      const products = sqlite.prepare(query).all(...params);
+      const summary = sqlite.prepare(`
+        SELECT COUNT(*) AS review_count, AVG(rating) AS average_rating
+        FROM reviews
+        WHERE target_type = 'product' AND target_id = ?
+          AND publication_status = 'published' AND review_status = 'published'
+          AND COALESCE(verified_fake_label, '') != 'fake'
+      `);
+      return products.map((product) => {
+        const review = summary.get(product.id);
+        return {
+          ...product,
+          reviews_count: Number(review.review_count || 0),
+          rating: review.review_count ? Math.round(Number(review.average_rating) * 10) / 10 : null
+        };
+      });
     },
     findById: (id) => sqlite.prepare('SELECT * FROM products WHERE id = ?').get(id),
     findByVendorId: (vendorId) => sqlite.prepare('SELECT * FROM products WHERE vendor_id = ? ORDER BY created_at DESC').all(vendorId),
@@ -828,9 +958,9 @@ export const db = {
   bookings: {
     create: (booking) => {
       sqlite.prepare(`
-        INSERT INTO bookings (id, user_id, provider_id, item_type, item_id, item_title, travelers, check_in_date, check_out_date, days, total_amount, escrow_amount, escrow_status, contract_address, contract_tx_hash, status, cancellation_reason, created_at, updated_at)
-        VALUES (@id, @user_id, @provider_id, @item_type, @item_id, @item_title, @travelers, @check_in_date, @check_out_date, @days, @total_amount, @escrow_amount, @escrow_status, @contract_address, @contract_tx_hash, @status, @cancellation_reason, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `).run(booking);
+        INSERT INTO bookings (id, user_id, provider_id, item_type, item_id, item_title, travelers, check_in_date, check_out_date, days, total_amount, escrow_amount, escrow_status, contract_address, contract_tx_hash, status, cancellation_reason, delivery_address, created_at, updated_at)
+        VALUES (@id, @user_id, @provider_id, @item_type, @item_id, @item_title, @travelers, @check_in_date, @check_out_date, @days, @total_amount, @escrow_amount, @escrow_status, @contract_address, @contract_tx_hash, @status, @cancellation_reason, @delivery_address, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run({ ...booking, delivery_address: booking.delivery_address || null });
       return db.bookings.findById(booking.id);
     },
     findById: (id) => {
@@ -877,6 +1007,20 @@ export const db = {
       }
       return db.bookings.findById(id);
     },
+    completeIfEligible: (id, userId, today) => {
+      const result = sqlite.prepare(`
+        UPDATE bookings
+        SET status = 'completed',
+            settled_at = COALESCE(settled_at, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND user_id = ?
+          AND status = 'confirmed'
+          AND check_out_date IS NOT NULL
+          AND date(check_out_date) <= date(?)
+      `).run(id, userId, today);
+      return result.changes ? db.bookings.findById(id) : null;
+    },
     settleEscrow: (id) => {
       sqlite.prepare("UPDATE bookings SET status = 'completed', escrow_status = 'released', settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
       return db.bookings.findById(id);
@@ -921,50 +1065,215 @@ export const db = {
   reviews: {
     create: (rev) => {
       sqlite.prepare(`
-        INSERT INTO reviews (id, booking_id, user_id, user_name, target_type, target_id, rating, review_text, sentiment, compound_score, emotion, aspects, is_flagged, created_at)
-        VALUES (@id, @booking_id, @user_id, @user_name, @target_type, @target_id, @rating, @review_text, @sentiment, @compound_score, @emotion, @aspects, @is_flagged, CURRENT_TIMESTAMP)
+        INSERT INTO reviews (id, booking_id, user_id, user_name, target_type, target_id, rating, review_text, sentiment, compound_score, emotion, aspects, is_flagged, publication_status, review_status, model_version, detector_version, suspicion_score, suspicion_reasons, risk_category, detection_analyzed_at, created_at)
+        VALUES (@id, @booking_id, @user_id, @user_name, @target_type, @target_id, @rating, @review_text, @sentiment, @compound_score, @emotion, @aspects, @is_flagged, @publication_status, @review_status, @model_version, @detector_version, @suspicion_score, @suspicion_reasons, @risk_category, @detection_analyzed_at, CURRENT_TIMESTAMP)
       `).run({
         ...rev,
-        aspects: typeof rev.aspects === 'object' ? JSON.stringify(rev.aspects) : rev.aspects
+        aspects: typeof rev.aspects === 'object' ? JSON.stringify(rev.aspects) : rev.aspects,
+        publication_status: rev.publication_status || 'published'
+        , review_status: rev.review_status || 'published'
+        , model_version: rev.model_version || 'lexicon-v1'
+        , detector_version: rev.detector_version || 'rules-v1'
+        , suspicion_score: rev.suspicion_score || 0
+        , suspicion_reasons: typeof rev.suspicion_reasons === 'object' ? JSON.stringify(rev.suspicion_reasons) : (rev.suspicion_reasons || '[]')
+        , risk_category: rev.risk_category || 'low'
+        , detection_analyzed_at: rev.detection_analyzed_at || null
       });
       return db.reviews.findById(rev.id);
     },
     findById: (id) => {
       const row = sqlite.prepare('SELECT * FROM reviews WHERE id = ?').get(id);
       if (!row) return null;
-      return { ...row, aspects: safeJSONParse(row.aspects, {}) };
+      return { ...row,       aspects: safeJSONParse(row.aspects, {}),
+      suspicion_reasons: safeJSONParse(row.suspicion_reasons, []) };
     },
-    listByTarget: (targetType, targetId) => {
-      return sqlite.prepare('SELECT * FROM reviews WHERE target_type = ? AND target_id = ? ORDER BY created_at DESC').all(targetType, targetId).map(r => ({
+    findByBookingId: (bookingId) => sqlite.prepare('SELECT * FROM reviews WHERE booking_id = ? LIMIT 1').get(bookingId),
+    listByTarget: (targetType, targetId, { publishedOnly = false } = {}) => {
+      const rows = publishedOnly
+        ? sqlite.prepare("SELECT * FROM reviews WHERE target_type = ? AND target_id = ? AND publication_status = 'published' AND review_status = 'published' ORDER BY created_at DESC").all(targetType, targetId)
+        : sqlite.prepare('SELECT * FROM reviews WHERE target_type = ? AND target_id = ? ORDER BY created_at DESC').all(targetType, targetId);
+      return rows.map(r => ({
         ...r,
         aspects: safeJSONParse(r.aspects, {})
       }));
     },
-    listAll: (limit = 50) => {
-      return sqlite.prepare('SELECT * FROM reviews ORDER BY created_at DESC LIMIT ?').all(limit).map(r => ({
+    listPublic: ({ targetType = 'destination', targetId, sort = 'newest', rating, page = 1, limit = 5 } = {}) => {
+      const orderBy = { newest: 'created_at DESC', oldest: 'created_at ASC', highest: 'rating DESC, created_at DESC', lowest: 'rating ASC, created_at DESC' }[sort] || 'created_at DESC';
+      const params = [targetType, targetId];
+      let where = "target_type = ? AND target_id = ? AND publication_status = 'published' AND review_status = 'published' AND COALESCE(verified_fake_label, '') != 'fake'";
+      if (rating !== undefined) {
+        where += ' AND rating = ?';
+        params.push(rating);
+      }
+      const total = sqlite.prepare(`SELECT COUNT(*) AS count FROM reviews WHERE ${where}`).get(...params).count;
+      const offset = (page - 1) * limit;
+      const rows = sqlite.prepare(`SELECT id, target_id, user_name, rating, review_text, created_at FROM reviews WHERE ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`).all(...params, limit, offset);
+      return { total, page, limit, totalPages: Math.ceil(total / limit), reviews: rows };
+    },
+    listAll: (limit = 50, { status, risk } = {}) => {
+      const conditions = [];
+      const params = [];
+      if (status && ['published', 'pending_review', 'rejected'].includes(status)) {
+        conditions.push('review_status = ?');
+        params.push(status);
+      }
+      if (risk && ['low', 'medium', 'high'].includes(risk)) {
+        conditions.push('risk_category = ?');
+        params.push(risk);
+      }
+      params.push(limit);
+      return sqlite.prepare(`SELECT * FROM reviews ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ?`).all(...params).map(r => ({
         ...r,
-        aspects: safeJSONParse(r.aspects, {})
+        aspects: safeJSONParse(r.aspects, {}),
+        suspicion_reasons: safeJSONParse(r.suspicion_reasons, [])
       }));
     },
-    stats: () => {
-      const reviews = sqlite.prepare('SELECT * FROM reviews').all();
+    listByUserTarget: (userId, targetType, targetId, limit = 20) => sqlite.prepare(
+      'SELECT * FROM reviews WHERE user_id = ? AND target_type = ? AND target_id = ? ORDER BY created_at DESC LIMIT ?'
+    ).all(userId, targetType, targetId, limit),
+    listByUserSince: (userId, since) => sqlite.prepare(
+      "SELECT * FROM reviews WHERE user_id = ? AND created_at >= datetime(?, 'unixepoch') ORDER BY created_at DESC"
+    ).all(userId, Math.floor(since / 1000)),
+    intelligenceStats: () => sqlite.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN publication_status = 'published' AND review_status = 'published' THEN 1 ELSE 0 END) AS published,
+        SUM(CASE WHEN review_status = 'pending_review' THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN review_status = 'rejected' OR verified_fake_label = 'fake' THEN 1 ELSE 0 END) AS rejected,
+        SUM(CASE WHEN suspicion_score > 0 THEN 1 ELSE 0 END) AS suspicious,
+        SUM(CASE WHEN verified_sentiment IS NOT NULL THEN 1 ELSE 0 END) AS verified_sentiment,
+        SUM(CASE WHEN verified_fake_label IS NOT NULL THEN 1 ELSE 0 END) AS verified_fake,
+        SUM(CASE WHEN annotation_status = 'unreviewed' THEN 1 ELSE 0 END) AS awaiting_annotation,
+        SUM(CASE WHEN annotation_status = 'verified' AND verified_sentiment IS NOT NULL AND verified_fake_label IS NOT NULL AND review_status = 'published' THEN 1 ELSE 0 END) AS training_eligible
+      FROM reviews
+    `).get(),
+    updateReviewDetection: (id, detection) => {
+      sqlite.prepare(`
+        UPDATE reviews
+        SET is_flagged = @is_flagged,
+            detector_version = @detector_version,
+            suspicion_score = @suspicion_score,
+            suspicion_reasons = @suspicion_reasons,
+            risk_category = @risk_category,
+            detection_analyzed_at = @detection_analyzed_at
+        WHERE id = @id
+      `).run({
+        id,
+        is_flagged: detection.isSuspicious ? 1 : 0,
+        detector_version: detection.detectorVersion,
+        suspicion_score: detection.suspicionScore,
+        suspicion_reasons: JSON.stringify(detection.suspicionReasons),
+        risk_category: detection.riskCategory,
+        detection_analyzed_at: detection.analysisTimestamp
+      });
+      return db.reviews.findById(id);
+    },
+    updateAspectAnalysis: (id, aspects, sentiment, compoundScore, emotion) => {
+      sqlite.prepare(`
+        UPDATE reviews
+        SET aspects = @aspects, sentiment = @sentiment,
+            compound_score = @compoundScore, emotion = @emotion
+        WHERE id = @id
+      `).run({
+        id,
+        aspects: JSON.stringify(aspects),
+        sentiment,
+        compoundScore,
+        emotion
+      });
+      return db.reviews.findById(id);
+    },
+    updateReviewIntelligence: (id, fields) => {
+      sqlite.prepare(`
+        UPDATE reviews SET review_status = @review_status, publication_status = @publication_status,
+          verified_sentiment = @verified_sentiment, verified_fake_label = @verified_fake_label,
+          annotation_status = @annotation_status, annotated_by = @annotated_by, annotated_at = CURRENT_TIMESTAMP,
+          verified_sentiment_by = @verified_sentiment_by, verified_sentiment_at = @verified_sentiment_at,
+          verified_fake_by = @verified_fake_by, verified_fake_at = @verified_fake_at
+        WHERE id = @id
+      `).run({
+        id,
+        ...fields,
+        verified_sentiment_by: fields.verified_sentiment_by ?? null,
+        verified_sentiment_at: fields.verified_sentiment_at ?? null,
+        verified_fake_by: fields.verified_fake_by ?? null,
+        verified_fake_at: fields.verified_fake_at ?? null
+      });
+      return db.reviews.findById(id);
+    },
+    addAnnotationHistory: (annotation) => sqlite.prepare(`
+      INSERT INTO review_annotation_history (id, review_id, admin_id, verified_sentiment, verified_fake_label, note)
+      VALUES (@id, @review_id, @admin_id, @verified_sentiment, @verified_fake_label, @note)
+    `).run(annotation),
+    listTrainingEligible: (limit = 1000) => sqlite.prepare(`
+      SELECT id, review_text, sentiment, verified_sentiment, verified_fake_label, model_version
+      FROM reviews
+      WHERE annotation_status = 'verified' AND verified_sentiment IS NOT NULL
+        AND verified_fake_label = 'genuine' AND review_status = 'published'
+      ORDER BY created_at ASC LIMIT ?
+    `).all(limit),
+    update: (id, review) => {
+      sqlite.prepare(`
+        UPDATE reviews
+        SET rating = @rating, review_text = @review_text, sentiment = @sentiment,
+            compound_score = @compound_score, emotion = @emotion, aspects = @aspects,
+            is_flagged = @is_flagged, review_status = @review_status, model_version = @model_version,
+            detector_version = @detector_version, suspicion_score = @suspicion_score,
+            suspicion_reasons = @suspicion_reasons, risk_category = @risk_category,
+            detection_analyzed_at = @detection_analyzed_at
+        WHERE id = @id
+      `).run({
+        ...review,
+        id,
+        aspects: typeof review.aspects === 'object' ? JSON.stringify(review.aspects) : review.aspects,
+        review_status: review.review_status || 'published',
+        model_version: review.model_version || 'lexicon-v1',
+        detector_version: review.detector_version || 'rules-v1',
+        suspicion_score: review.suspicion_score || 0,
+        suspicion_reasons: typeof review.suspicion_reasons === 'object' ? JSON.stringify(review.suspicion_reasons) : (review.suspicion_reasons || '[]'),
+        risk_category: review.risk_category || 'low',
+        detection_analyzed_at: review.detection_analyzed_at || null
+      });
+      return db.reviews.findById(id);
+    },
+    updatePublicationStatus: (id, publicationStatus) => {
+      sqlite.prepare('UPDATE reviews SET publication_status = ? WHERE id = ?').run(publicationStatus, id);
+      return db.reviews.findById(id);
+    },
+    delete: (id) => sqlite.prepare('DELETE FROM reviews WHERE id = ?').run(id),
+    stats: ({ targetId, publishedOnly = false } = {}) => {
+      const reviews = targetId
+        ? sqlite.prepare(`SELECT * FROM reviews WHERE target_type = 'destination' AND target_id = ?${publishedOnly ? " AND publication_status = 'published' AND review_status = 'published'" : ''}`).all(targetId)
+        : sqlite.prepare(`SELECT * FROM reviews${publishedOnly ? " WHERE publication_status = 'published' AND review_status = 'published'" : ''}`).all();
       const total = reviews.length;
       if (total === 0) return null;
 
-      const counts = { Positive: 0, Neutral: 0, Negative: 0 };
+      const counts = { Positive: 0, Negative: 0, Neutral: 0, Mixed: 0 };
       const aspectSums = { cleanliness: 0, hospitality: 0, transport: 0, food: 0, safety: 0 };
+      const aspectSentimentCounts = {};
 
       reviews.forEach(r => {
         counts[r.sentiment] = (counts[r.sentiment] || 0) + 1;
         const asp = safeJSONParse(r.aspects, {});
         for (const k in aspectSums) {
-          aspectSums[k] += asp[k] || 4.0;
+          if (typeof asp[k] === 'number' && Number.isFinite(asp[k])) {
+            aspectSums[k] += asp[k];
+          }
+          const label = typeof asp[k] === 'string'
+            ? asp[k]
+            : typeof asp[k] === 'number'
+              ? asp[k] >= 3.5 ? 'Positive' : asp[k] <= 2.5 ? 'Negative' : 'Neutral'
+              : null;
+          if (label) {
+            aspectSentimentCounts[k] ||= { Positive: 0, Negative: 0, Neutral: 0 };
+            aspectSentimentCounts[k][label] = (aspectSentimentCounts[k][label] || 0) + 1;
+          }
         }
       });
 
       const aspectScores = {};
       for (const k in aspectSums) {
-        aspectScores[k] = Math.round((aspectSums[k] / total) * 10) / 10;
+        aspectScores[k] = aspectSums[k] > 0 ? Math.round((aspectSums[k] / total) * 10) / 10 : null;
       }
 
       return {
@@ -973,9 +1282,11 @@ export const db = {
           positivePercent: Math.round((counts.Positive / total) * 100),
           neutralPercent: Math.round((counts.Neutral / total) * 100),
           negativePercent: Math.round((counts.Negative / total) * 100),
+          mixedPercent: Math.round((counts.Mixed / total) * 100),
           rawCounts: counts
         },
         aspectScores
+        , aspectSentimentCounts
       };
     }
   },
@@ -1041,7 +1352,7 @@ export const db = {
         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       `).run(`loc-${Date.now()}`, vId, vLat, vLng, vSpeed);
     },
-    listAlerts: () => sqlite.prepare('SELECT * FROM transport_alerts WHERE is_active = 1 ORDER BY created_at DESC LIMIT 10').all(),
+    listAlerts: () => sqlite.prepare("SELECT * FROM transport_alerts WHERE is_active = 1 AND type <> 'Quality Flag' ORDER BY created_at DESC LIMIT 10").all(),
     createAlert: (alert) => {
       sqlite.prepare(`
         INSERT INTO transport_alerts (id, type, severity, title, location, message, created_by, is_active, created_at)

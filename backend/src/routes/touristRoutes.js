@@ -9,6 +9,7 @@ router.use(authenticate);
 
 router.get('/dashboard', touristController.getDashboard);
 router.put('/preferences', touristController.updatePreferences);
+router.post('/bookings/:bookingId/complete', touristController.completeBooking);
 router.post('/favourites', touristController.toggleFavourite);
 router.get('/favourites', touristController.getFavourites);
 
