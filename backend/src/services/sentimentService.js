@@ -169,7 +169,7 @@ export const sentimentService = {
   /**
    * Submit new review into database and perform sentiment evaluation
    */
-  submitReview({ bookingId, destinationId, destinationName, providerId, productId, productName, userId, userName, rating, reviewText }) {
+  submitReview({ bookingId, destinationId, destinationName, providerId, productId, productName, serviceId, serviceName, userId, userName, rating, reviewText }) {
     if (productId && !bookingId) {
       throw new Error('A completed product order is required to submit this review.');
     }
@@ -178,8 +178,8 @@ export const sentimentService = {
     const detection = fakeReviewDetectionService.inspect({
       db,
       userId,
-      targetType: destinationId ? 'destination' : productId ? 'product' : 'provider',
-      targetId: destinationId || productId || providerId,
+      targetType: destinationId ? 'destination' : productId ? 'product' : serviceId ? 'service' : 'provider',
+      targetId: destinationId || productId || serviceId || providerId,
       reviewText,
       rating: numRating
     });
@@ -193,8 +193,8 @@ export const sentimentService = {
       booking_id: bookingId || null,
       user_id: userId || 'usr-tourist-anonymous',
       user_name: userName || 'Explorer',
-      target_type: destinationId ? 'destination' : productId ? 'product' : 'provider',
-      target_id: destinationId || productId || providerId || 'netarhat',
+      target_type: destinationId ? 'destination' : productId ? 'product' : serviceId ? 'service' : 'provider',
+      target_id: destinationId || productId || serviceId || providerId || 'netarhat',
       rating: numRating,
       review_text: reviewText,
       sentiment: analysis.sentiment,

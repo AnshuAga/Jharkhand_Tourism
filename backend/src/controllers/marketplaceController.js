@@ -20,9 +20,17 @@ function normalizeDeliveryAddress(value) {
 export const marketplaceController = {
   getMarketplaceData(req, res) {
     try {
-      const { category, district, search } = req.query;
+      const { category, district, search, startDate, endDate, travelers, budget, destination } = req.query;
       const products = db.products.list({ category, district, search });
-      const services = db.services.list({ category, district });
+      const requestedBudget = Number(budget);
+      const services = db.services.list({
+        category,
+        district: destination || district,
+        startDate,
+        endDate,
+        travelers,
+        onlyBookable: true
+      }).filter((service) => !Number.isFinite(requestedBudget) || requestedBudget <= 0 || Number(service.price) <= requestedBudget);
       const certificates = db.certificates.listValid();
 
       // Separate services into guides, homestays, packages
@@ -37,6 +45,7 @@ export const marketplaceController = {
         guides,
         homestays,
         packages,
+        filters: { startDate: startDate || null, endDate: endDate || null, travelers: Number(travelers) || 1, budget: requestedBudget || null },
         verifiedCertificatesCount: certificates.length
       });
     } catch (error) {
@@ -94,7 +103,11 @@ export const marketplaceController = {
         resolvedAmount = item.price;
       } else if (['guide', 'homestay', 'package', 'restaurant', 'transport'].includes(itemType)) {
         item = db.services.findById(itemId);
-        if (!item || !item.is_active || item.approval_status !== 'approved' || item.category !== itemType) {
+        const availability = item ? db.services.getAvailability(item.id, { startDate: checkInDate, endDate: checkOutDate, travelers }) : null;
+        const provider = item ? db.providerProfiles.findByUserId(item.provider_id) : null;
+        const providerIsEligible = item?.category === 'package' || provider?.verification_status === 'approved';
+        if (!item || !item.is_active || item.approval_status !== 'approved' || item.category !== itemType || !providerIsEligible ||
+          availability?.availabilityStatus === 'unavailable') {
           return res.status(404).json({ success: false, message: 'This tourism package is no longer available.' });
         }
         resolvedProviderId = item.provider_id;

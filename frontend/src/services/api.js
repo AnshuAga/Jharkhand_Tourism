@@ -62,7 +62,12 @@ export const api = {
     changePassword: (passwords) => request('/auth/change-password', { method: 'PUT', body: JSON.stringify(passwords) })
   },
   itinerary: {
-    plan: (preferences) => request('/itinerary/plan', { method: 'POST', body: JSON.stringify(preferences) })
+    plan: (preferences) => request('/itinerary/plan', { method: 'POST', body: JSON.stringify(preferences) }),
+    searchTrains: (params) => request(`/itinerary/trains?${new URLSearchParams(params).toString()}`),
+    listDrafts: () => request('/itinerary/drafts'),
+    createDraft: (draft) => request('/itinerary/drafts', { method: 'POST', body: JSON.stringify(draft) }),
+    updateDraft: (id, draft) => request(`/itinerary/drafts/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(draft) }),
+    deleteDraft: (id) => request(`/itinerary/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' })
   },
   recommendations: {
     get: (preferences = {}) => {
@@ -141,7 +146,11 @@ export const api = {
   },
   payments: {
     createOrder: (bookingData) => request('/payments/order', { method: 'POST', body: JSON.stringify(bookingData) }),
-    createBundleOrder: (bookingData) => request('/payments/bundle-order', { method: 'POST', body: JSON.stringify(bookingData) }),
+    createBundleOrder: (bookingData, idempotencyKey) => request('/payments/bundle-order', {
+      method: 'POST',
+      headers: idempotencyKey ? { 'X-Idempotency-Key': idempotencyKey } : undefined,
+      body: JSON.stringify(bookingData)
+    }),
     verify: (paymentData) => request('/payments/verify', { method: 'POST', body: JSON.stringify(paymentData) })
   },
   blockchain: {
@@ -159,6 +168,7 @@ export const api = {
     submitReview: (reviewData) => request('/sentiment/review', { method: 'POST', body: JSON.stringify(reviewData) }),
     getReviews: (params = '') => request(`/sentiment/reviews${params}`),
     getPublicReviews: (destinationId, params = '') => request(`/sentiment/reviews?destinationId=${encodeURIComponent(destinationId)}${params ? `&${params}` : ''}`),
+    getServiceReviews: (serviceId, params = '') => request(`/sentiment/reviews?targetType=service&targetId=${encodeURIComponent(serviceId)}${params ? `&${params}` : ''}`),
     getAnalytics: (destinationId = '') => request(`/sentiment/analytics${destinationId ? `?destinationId=${encodeURIComponent(destinationId)}` : ''}`),
     getSyntheticDataset: (sampleId = '') => request(`/sentiment/synthetic-dataset${sampleId ? `?sampleId=${encodeURIComponent(sampleId)}` : ''}`),
     updateReview: (id, reviewData) => request(`/sentiment/reviews/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(reviewData) }),

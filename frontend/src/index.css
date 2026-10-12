@@ -333,6 +333,57 @@ h1, h2, h3, h4, h5, h6, .font-serif {
   }
 }
 
+.birsa-final-page {
+  color: var(--color-sand);
+}
+
+.birsa-final-page [class*="bg-[#0b1326"],
+.birsa-final-page [class*="bg-slate-950"],
+.birsa-final-page [class*="bg-slate-900"] {
+  background-color: #332f2b !important;
+}
+
+.birsa-final-page [class*="border-slate-800"],
+.birsa-final-page [class*="border-slate-700"] {
+  border-color: rgb(231 209 176 / 0.3) !important;
+}
+
+.birsa-final-page [class*="text-slate-100"],
+.birsa-final-page [class*="text-slate-200"],
+.birsa-final-page [class*="text-white"] {
+  color: var(--color-sand) !important;
+}
+
+.birsa-final-page [class*="text-slate-300"],
+.birsa-final-page [class*="text-slate-400"],
+.birsa-final-page [class*="text-slate-500"] {
+  color: var(--color-muted-sand) !important;
+}
+
+.birsa-final-page [class*="text-amber-"],
+.birsa-final-page [class*="text-cyan-"],
+.birsa-final-page [class*="text-emerald-"] {
+  color: var(--color-antique-gold) !important;
+}
+
+.birsa-final-page [class*="bg-amber-400"],
+.birsa-final-page [class*="bg-cyan-300"] {
+  background-color: var(--color-antique-gold) !important;
+  color: var(--color-charcoal) !important;
+}
+
+.birsa-final-page [class*="border-amber-"],
+.birsa-final-page [class*="border-cyan-"],
+.birsa-final-page [class*="border-emerald-"] {
+  border-color: rgb(152 116 72 / 0.55) !important;
+}
+
+.birsa-final-page [class*="bg-amber-400/"],
+.birsa-final-page [class*="bg-cyan-300/"],
+.birsa-final-page [class*="bg-emerald-400/"] {
+  background-color: rgb(152 116 72 / 0.14) !important;
+}
+
 @media (max-width: 480px) {
   .planner-profile-summary {
     grid-template-columns: 1fr;

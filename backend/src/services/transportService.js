@@ -41,7 +41,7 @@ const round = (value) => Math.round(value * 100) / 100;
 const externalSearchUrl = (mode, from, to, tripDate) => {
   const origin = encodeURIComponent(from);
   const destination = encodeURIComponent(to);
-  if (mode === 'Train') return 'https://www.irctc.co.in/nget/train-search';
+  if (mode === 'Train') return 'https://www.irctc.co.in/';
   if (mode === 'Bus') return `https://www.redbus.in/bus-tickets/${encodeURIComponent(from.toLowerCase().replace(/\s+/g, '-'))}-to-${encodeURIComponent(to.toLowerCase().replace(/\s+/g, '-'))}`;
   return `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${tripDate ? `&travelmode=driving` : ''}`;
 };
@@ -122,7 +122,9 @@ export async function estimateTransportPlan({ startLocation = 'Ranchi', destinat
     const googleRoute = usesRoadRoute ? await googleRouteDistance(from, to) : null;
     const distance = googleRoute?.distance || distanceKm(from, to);
     const durationHours = googleRoute?.durationHours || Math.max(0.2, round(distance / config.speed));
-    const estimatedCost = Math.max(config.fixed, Math.round((distance * config.rate + config.fixed) * travelerCount));
+    const estimatedCost = selectedMode === 'Train'
+      ? 0
+      : Math.max(config.fixed, Math.round((distance * config.rate + config.fixed) * travelerCount));
     return {
       from: from.name,
       to: to.name,
@@ -138,28 +140,36 @@ export async function estimateTransportPlan({ startLocation = 'Ranchi', destinat
       estimatedCost,
       currency: 'INR',
       mode: selectedMode,
-      availabilityStatus: 'not_checked',
+      availabilityStatus: selectedMode === 'Train' ? 'unavailable' : 'not_checked',
       bookingType: config.bookingType,
       bookingUrl: externalSearchUrl(selectedMode, from.name, to.name, tripDate),
-      notes: config.note
+      notes: selectedMode === 'Train'
+        ? 'Live train fare and seat availability are unavailable until an authorized railway integration returns them. Check IRCTC before booking.'
+        : config.note
     };
   }));
+  // Train is an intercity option only. Local sightseeing always uses a road-transfer
+  // estimate so the same train leg is never charged again as local transport.
+  const localMode = selectedMode === 'Train' ? 'Private Car' : selectedMode;
+  const localConfig = MODES[localMode];
   const localDistance = stops.length ? Math.max(0, stops.length * 10) : 0;
-  const localCost = stops.length ? Math.round((localDistance * config.rate + config.fixed) * travelerCount) : 0;
+  const localCost = stops.length ? Math.round((localDistance * localConfig.rate + localConfig.fixed) * travelerCount) : 0;
   const localTransport = [{
     from: stops.length ? stops[0].name : origin.name,
     to: stops.length ? 'Local attractions' : origin.name,
     distance: `${localDistance} km`,
-    duration: localDistance ? `${round(localDistance / config.speed)} hours` : 'Not required',
+    duration: localDistance ? `${round(localDistance / localConfig.speed)} hours` : 'Not required',
     estimatedCost: `₹${localCost.toLocaleString('en-IN')}`,
     estimatedCostValue: localCost,
     distanceKm: localDistance,
     currency: 'INR',
-    mode: selectedMode,
+    mode: localMode,
     availabilityStatus: 'not_checked',
-    bookingType: config.bookingType,
-    bookingUrl: externalSearchUrl(selectedMode, stops[0]?.name || origin.name, 'Local attractions', tripDate),
-    notes: stops.length ? `Allowance for approximately ${localDistance} km of local movement; verify locally.` : 'No local movement estimate was required.'
+    bookingType: localConfig.bookingType,
+    bookingUrl: externalSearchUrl(localMode, stops[0]?.name || origin.name, 'Local attractions', tripDate),
+    notes: stops.length
+      ? `Allowance for approximately ${localDistance} km of local road movement; intercity train travel is shown separately.`
+      : 'No local movement estimate was required.'
   }];
   const intercityCost = intercity.reduce((sum, leg) => sum + leg.estimatedCost, 0);
   return {
@@ -178,6 +188,94 @@ export async function estimateTransportPlan({ startLocation = 'Ranchi', destinat
       ? 'Distance and driving duration use Google Routes when available. Fare and availability are still estimates and must be verified.'
       : 'Google Routes is not configured. Distance uses destination coordinates and fare/duration use estimates; no live availability or pricing has been claimed.'
   };
+}
+
+export async function searchTrainOptions({ from, to, date, travelClass = '', passengers = {} } = {}) {
+  if (!from || !to || !date) {
+    const error = new Error('Origin, destination, and travel date are required for train search.');
+    error.status = 400;
+    throw error;
+  }
+  const requestedDate = String(date).slice(0, 10);
+  const parsedDate = new Date(`${requestedDate}T00:00:00Z`);
+  const normalizedDate = !Number.isNaN(parsedDate.getTime())
+    ? parsedDate.toISOString().slice(0, 10)
+    : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate) || normalizedDate !== requestedDate) {
+    const error = new Error('Travel date must be a valid YYYY-MM-DD date.');
+    error.status = 400;
+    throw error;
+  }
+  const configuredUrl = process.env.TRAIN_SEARCH_API_URL;
+  if (!configuredUrl) {
+    return {
+      status: 'unavailable',
+      dataClassification: 'unavailable',
+      results: [],
+      message: 'Live train schedules are not configured. Check Indian Railways directly.',
+      bookingUrl: 'https://www.irctc.co.in/'
+    };
+  }
+  let url;
+  try {
+    url = new URL(configuredUrl);
+  } catch {
+    return {
+      status: 'unavailable',
+      dataClassification: 'unavailable',
+      results: [],
+      message: 'The configured train integration URL is invalid.',
+      bookingUrl: 'https://www.irctc.co.in/'
+    };
+  }
+  url.searchParams.set('from', from);
+  url.searchParams.set('to', to);
+  url.searchParams.set('date', date);
+  if (travelClass) url.searchParams.set('class', travelClass);
+  if (passengers.adults) url.searchParams.set('adults', passengers.adults);
+  if (passengers.children) url.searchParams.set('children', passengers.children);
+  if (passengers.seniors) url.searchParams.set('seniors', passengers.seniors);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const headers = { Accept: 'application/json' };
+    if (process.env.TRAIN_SEARCH_API_KEY) headers.Authorization = `Bearer ${process.env.TRAIN_SEARCH_API_KEY}`;
+    const response = await fetch(url, { signal: controller.signal, headers });
+    if (!response.ok) {
+      throw new Error(`Train provider returned HTTP ${response.status}.`);
+    }
+    const payload = await response.json();
+    if (!Array.isArray(payload.results)) {
+      throw new Error('Train provider returned an invalid result shape.');
+    }
+    return {
+      status: 'live',
+      dataClassification: 'live',
+      results: payload.results.map((result) => ({
+        trainName: result.trainName || result.name || null,
+        trainNumber: result.trainNumber || result.number || null,
+        origin: result.origin || result.from || from,
+        destination: result.destination || result.to || to,
+        departure: result.departure || result.departureTime || null,
+        arrival: result.arrival || result.arrivalTime || null,
+        duration: result.duration || null,
+        fare: result.fare ?? null,
+        availability: result.availability ?? null
+      })),
+      bookingUrl: 'https://www.irctc.co.in/'
+    };
+  } catch (error) {
+    if (error.name === 'AbortError') error.message = 'Train provider timed out.';
+    return {
+      status: 'unavailable',
+      dataClassification: 'unavailable',
+      results: [],
+      message: `Live train schedules are temporarily unavailable: ${error.message}`,
+      bookingUrl: 'https://www.irctc.co.in/'
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export const transportService = { estimateTransportPlan };

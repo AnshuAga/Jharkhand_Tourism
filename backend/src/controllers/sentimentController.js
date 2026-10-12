@@ -20,7 +20,7 @@ export const sentimentController = {
 
   submitReview(req, res) {
     try {
-      const { bookingId, destinationId, destinationName, providerId, productId, productName, rating, reviewText } = req.body;
+      const { bookingId, destinationId, destinationName, providerId, productId, productName, serviceId, serviceName, rating, reviewText } = req.body;
       if (typeof reviewText !== 'string' || !reviewText.trim()) {
         return res.status(400).json({ success: false, message: 'Review text is required.' });
       }
@@ -37,6 +37,9 @@ export const sentimentController = {
       if (productId && !db.products.findById(productId)) {
         return res.status(400).json({ success: false, message: 'Selected product was not found.' });
       }
+      if (serviceId && !db.services.findById(serviceId)) {
+        return res.status(400).json({ success: false, message: 'Selected package or service was not found.' });
+      }
       if (productId) {
         const booking = bookingId ? db.bookings.findById(bookingId) : null;
         if (!bookingId || !booking || booking.user_id !== req.user.id || booking.item_type !== 'product' || booking.item_id !== productId) {
@@ -49,7 +52,20 @@ export const sentimentController = {
           return res.status(409).json({ success: false, message: 'This product order already has a review.' });
         }
       }
-      if (!destinationId && !providerId && !productId) {
+      if (serviceId) {
+        const booking = bookingId ? db.bookings.findById(bookingId) : null;
+        if (!booking || booking.user_id !== req.user.id || booking.item_id !== serviceId ||
+          !['package', 'guide', 'homestay', 'restaurant', 'transport'].includes(booking.item_type)) {
+          return res.status(403).json({ success: false, message: 'A matching completed service booking owned by your account is required.' });
+        }
+        if (booking.status !== 'completed') {
+          return res.status(400).json({ success: false, message: 'Service reviews are available after the booking is completed.' });
+        }
+        if (db.reviews.findByBookingId(bookingId)) {
+          return res.status(409).json({ success: false, message: 'This booking already has a review.' });
+        }
+      }
+      if (!destinationId && !providerId && !productId && !serviceId) {
         return res.status(400).json({ success: false, message: 'A destination, product, or provider is required.' });
       }
       if (bookingId && !db.bookings.findById(bookingId)) {
@@ -66,6 +82,8 @@ export const sentimentController = {
         providerId,
         productId,
         productName,
+        serviceId,
+        serviceName,
         userId,
         userName,
         rating: numRating,
@@ -83,8 +101,9 @@ export const sentimentController = {
     try {
       const targetType = String(req.query.targetType || 'destination').trim();
       const targetId = String(req.query.targetId || req.query.destinationId || '').trim();
-      if (!['destination', 'product'].includes(targetType) || !targetId ||
-        (targetType === 'destination' ? !db.destinations.findById(targetId) : !db.products.findById(targetId))) {
+      if (!['destination', 'product', 'service'].includes(targetType) || !targetId ||
+        (targetType === 'destination' ? !db.destinations.findById(targetId) :
+          targetType === 'product' ? !db.products.findById(targetId) : !db.services.findById(targetId))) {
         return res.status(400).json({ success: false, message: `A valid ${targetType} ID is required.` });
       }
       const sort = String(req.query.sort || 'newest');

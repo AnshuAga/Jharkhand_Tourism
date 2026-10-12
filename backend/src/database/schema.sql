@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS services (
     amenities TEXT DEFAULT '[]', -- JSON Array
     availability TEXT DEFAULT '{}', -- JSON Object
     is_active INTEGER DEFAULT 1,
-    approval_status TEXT DEFAULT 'approved' CHECK(approval_status IN ('pending', 'approved', 'rejected')),
+    approval_status TEXT DEFAULT 'approved' CHECK(approval_status IN ('pending', 'approved', 'rejected', 'changes_requested')),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -333,6 +333,19 @@ CREATE TABLE IF NOT EXISTS review_annotation_history (
     note TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 16b. SAVED ITINERARY DRAFTS
+CREATE TABLE IF NOT EXISTS itinerary_drafts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT 'Untitled journey',
+    preferences TEXT NOT NULL,
+    itinerary TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_itinerary_drafts_user ON itinerary_drafts(user_id, updated_at);
 
 -- 17. NOTIFICATIONS
 CREATE TABLE IF NOT EXISTS notifications (

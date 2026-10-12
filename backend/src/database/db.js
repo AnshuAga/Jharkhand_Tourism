@@ -38,6 +38,27 @@ sqlite.exec(`
     PRIMARY KEY (booking_id, service_id)
   )
 `);
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS booking_request_keys (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    request_key TEXT NOT NULL,
+    booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, request_key)
+  )
+`);
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS itinerary_drafts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT 'Untitled journey',
+    preferences TEXT NOT NULL,
+    itinerary TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_itinerary_drafts_user ON itinerary_drafts(user_id, updated_at);
+`);
 try { sqlite.exec("ALTER TABLE bookings ADD COLUMN delivery_address TEXT"); } catch { /* column already exists */ }
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS recommendation_interactions (
@@ -307,6 +328,45 @@ export function safeJSONParse(str, fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+function dateIsWithinAvailability(date, availability) {
+  if (!date) return true;
+  const requested = String(date).slice(0, 10);
+  if (availability.startDate && requested < String(availability.startDate).slice(0, 10)) return false;
+  if (availability.endDate && requested > String(availability.endDate).slice(0, 10)) return false;
+  if (Array.isArray(availability.blackoutDates) &&
+    availability.blackoutDates.some((blockedDate) => String(blockedDate).slice(0, 10) === requested)) return false;
+  if (Array.isArray(availability.availableDates) &&
+    !availability.availableDates.some((availableDate) => String(availableDate).slice(0, 10) === requested)) return false;
+  if (Array.isArray(availability.days) && availability.days.length) {
+    const weekday = new Date(`${requested}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+    if (!availability.days.some((day) => String(day).toLowerCase() === weekday.toLowerCase())) return false;
+  }
+  return true;
+}
+
+function serviceAvailability(service, { startDate, endDate, travelers = 1 } = {}) {
+  const availability = service.availability || {};
+  const requestedTravelers = Math.max(1, Number(travelers) || 1);
+  const explicitCapacity = availability.availableRooms ?? availability.availableCapacity;
+  const capacityKnown = explicitCapacity !== undefined && explicitCapacity !== null && Number.isFinite(Number(explicitCapacity));
+  const datesSupported = Boolean(
+    availability.startDate || availability.endDate || availability.blackoutDates ||
+    availability.availableDates || availability.days
+  );
+  const dateMatches = dateIsWithinAvailability(startDate, availability) &&
+    dateIsWithinAvailability(endDate, availability);
+  const capacityMatches = !capacityKnown || Number(explicitCapacity) >= requestedTravelers;
+  return {
+    availabilityVerified: capacityKnown || datesSupported,
+    availabilityStatus: capacityMatches && dateMatches
+      ? (capacityKnown ? 'available' : datesSupported ? 'date-check-passed' : 'confirmation-required')
+      : 'unavailable',
+    capacityKnown,
+    dateMatches,
+    capacityMatches
+  };
 }
 
 function withPublishedReviewSummary(destination) {
@@ -866,11 +926,12 @@ export const db = {
 
   // Services (Guides & Homestays)
   services: {
-    list: ({ category, district } = {}) => {
+    list: ({ category, district, startDate, endDate, travelers = 1, onlyBookable = false } = {}) => {
       let query = `
         SELECT s.*, u.name as provider_name, p.verification_status as provider_verified, p.rating as provider_rating,
           c.certificate_id, c.blockchain_tx_hash, c.block_number, c.valid_until as certificate_valid_until,
-          p.service_area
+          p.service_area, p.business_name, p.languages as provider_languages, p.specialization as provider_specialization,
+          p.address as provider_address, p.state as provider_state
         FROM services s
         JOIN users u ON s.provider_id = u.id
         LEFT JOIN provider_profiles p ON s.provider_id = p.user_id
@@ -894,7 +955,13 @@ export const db = {
         ...r,
         amenities: safeJSONParse(r.amenities, []),
         availability: safeJSONParse(r.availability, {})
-      }));
+      })).map((service) => ({
+        ...service,
+        ...serviceAvailability(service, { startDate, endDate, travelers })
+      })).filter((service) => !onlyBookable || (
+        service.availabilityStatus !== 'unavailable' &&
+        (service.category === 'package' || service.provider_verified === 'approved')
+      ));
     },
     findById: (id) => {
       const row = sqlite.prepare('SELECT * FROM services WHERE id = ?').get(id);
@@ -904,6 +971,22 @@ export const db = {
         amenities: safeJSONParse(row.amenities, []),
         availability: safeJSONParse(row.availability, {})
       };
+    },
+    getAvailability: (id, options = {}) => {
+      const service = db.services.findById(id);
+      return service ? serviceAvailability(service, options) : null;
+    },
+    reserveAvailability: (id, quantity = 1) => {
+      const service = db.services.findById(id);
+      const availableRooms = Number(service?.availability?.availableRooms);
+      if (!service || !Number.isFinite(availableRooms) || availableRooms < Math.max(1, Number(quantity) || 1)) return false;
+      const availability = {
+        ...service.availability,
+        availableRooms: availableRooms - Math.max(1, Number(quantity) || 1)
+      };
+      const result = sqlite.prepare('UPDATE services SET availability = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_active = 1 AND approval_status = ?')
+        .run(JSON.stringify(availability), id, 'approved');
+      return result.changes > 0;
     },
     findByProviderId: (providerId) => {
       return sqlite.prepare('SELECT * FROM services WHERE provider_id = ? ORDER BY created_at DESC').all(providerId).map(r => ({
@@ -963,6 +1046,15 @@ export const db = {
       `).run({ ...booking, delivery_address: booking.delivery_address || null });
       return db.bookings.findById(booking.id);
     },
+    bookingRequestKeys: {
+      find: (userId, requestKey) => sqlite.prepare(
+        'SELECT booking_id FROM booking_request_keys WHERE user_id = ? AND request_key = ?'
+      ).get(userId, requestKey),
+      create: (userId, requestKey, bookingId) => sqlite.prepare(
+        'INSERT INTO booking_request_keys (user_id, request_key, booking_id) VALUES (?, ?, ?)'
+      ).run(userId, requestKey, bookingId)
+    },
+
     findById: (id) => {
       return sqlite.prepare(`
         SELECT b.*, u.name as user_name, u.email as user_email, p.name as provider_name
@@ -1042,6 +1134,41 @@ export const db = {
       `).get();
       return counts;
     }
+  },
+
+  itineraryDrafts: {
+    create: (draft) => {
+      sqlite.prepare(`
+        INSERT INTO itinerary_drafts (id, user_id, title, preferences, itinerary)
+        VALUES (@id, @user_id, @title, @preferences, @itinerary)
+      `).run({
+        ...draft,
+        preferences: JSON.stringify(draft.preferences || {}),
+        itinerary: draft.itinerary ? JSON.stringify(draft.itinerary) : null
+      });
+      return db.itineraryDrafts.findById(draft.id, draft.user_id);
+    },
+    findById: (id, userId) => {
+      const row = sqlite.prepare('SELECT * FROM itinerary_drafts WHERE id = ? AND user_id = ?').get(id, userId);
+      if (!row) return null;
+      return { ...row, preferences: safeJSONParse(row.preferences, {}), itinerary: row.itinerary ? safeJSONParse(row.itinerary, null) : null };
+    },
+    listByUserId: (userId) => sqlite.prepare('SELECT * FROM itinerary_drafts WHERE user_id = ? ORDER BY updated_at DESC').all(userId).map((row) => ({
+      ...row, preferences: safeJSONParse(row.preferences, {}), itinerary: row.itinerary ? safeJSONParse(row.itinerary, null) : null
+    })),
+    update: (id, userId, draft) => {
+      const result = sqlite.prepare(`
+        UPDATE itinerary_drafts
+        SET title = @title, preferences = @preferences, itinerary = @itinerary, updated_at = CURRENT_TIMESTAMP
+        WHERE id = @id AND user_id = @user_id
+      `).run({
+        id, user_id: userId, title: draft.title || 'Untitled journey',
+        preferences: JSON.stringify(draft.preferences || {}),
+        itinerary: draft.itinerary ? JSON.stringify(draft.itinerary) : null
+      });
+      return result.changes ? db.itineraryDrafts.findById(id, userId) : null;
+    },
+    delete: (id, userId) => sqlite.prepare('DELETE FROM itinerary_drafts WHERE id = ? AND user_id = ?').run(id, userId).changes > 0
   },
 
   // Payments

@@ -1,5 +1,5 @@
 import { db } from '../database/db.js';
-import { estimateTransportPlan } from './transportService.js';
+import { estimateTransportPlan, searchTrainOptions } from './transportService.js';
 
 // Calculate Haversine distance in kilometers between two lat/lng points
 export function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -51,6 +51,20 @@ function normalizePlaceName(value) {
     .trim();
 }
 
+function localDateString(date = new Date()) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
+}
+
+function isValidDateString(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && localDateString(date) === value;
+}
+
 export const aiPlannerService = {
   /**
    * Generates an optimized day-by-day travel itinerary using Hybrid Filtering + TSP sequencing
@@ -58,6 +72,7 @@ export const aiPlannerService = {
    */
   async generateItinerary(preferences) {
     const {
+      journeyMode = 'within_jharkhand',
       days = 3,
       budget = 25000,
       travelers = 2,
@@ -65,6 +80,16 @@ export const aiPlannerService = {
       children = 0,
       seniors = 0,
       startCity = 'Ranchi',
+      hometown = '',
+      entryStation = startCity,
+      returnStation = startCity,
+      endLocation = '',
+      oneWay = false,
+      returnDate = '',
+      preferredTrainClass = '',
+      trainOriginStation = '',
+      trainDestinationStation = '',
+      trainReturnStation = '',
       style = 'Relaxed & Scenic',
       interests = ['nature'],
       places = [],
@@ -80,6 +105,58 @@ export const aiPlannerService = {
       guideServiceId = '',
       hotelServiceId = ''
     } = preferences;
+
+    const tripDays = Math.max(1, Number(days) || 1);
+    const tripStartDate = preferences.tripDate
+      ? String(preferences.tripDate)
+      : localDateString();
+    if (!isValidDateString(tripStartDate)) throw new Error('A valid trip start date is required.');
+    const startDateObject = new Date(`${tripStartDate}T00:00:00`);
+    if (Number.isNaN(startDateObject.getTime())) throw new Error('A valid trip start date is required.');
+    const tripEndDateObject = new Date(startDateObject);
+    tripEndDateObject.setDate(tripEndDateObject.getDate() + tripDays - 1);
+    const tripEndDate = [
+      tripEndDateObject.getFullYear(),
+      String(tripEndDateObject.getMonth() + 1).padStart(2, '0'),
+      String(tripEndDateObject.getDate()).padStart(2, '0')
+    ].join('-');
+    const returnTripDate = returnDate ? String(returnDate).slice(0, 10) : '';
+    if (returnTripDate && (!isValidDateString(returnTripDate) || returnTripDate <= tripStartDate)) {
+      throw new Error('Return date must be a valid date after the trip start date.');
+    }
+    const resolvedJourneyMode = ['hometown_round_trip', 'within_jharkhand', 'open_jaw'].includes(journeyMode)
+      ? journeyMode
+      : 'within_jharkhand';
+    const travellerTotal = Number(adults) + Number(children) + Number(seniors);
+    if (Number(travelers) <= 0 || travellerTotal <= 0 || travellerTotal !== Number(travelers)) {
+      throw new Error('Total travellers must equal adults, children, and seniors, and must be greater than zero.');
+    }
+    if (!Number.isFinite(Number(budget)) || Number(budget) < 0) throw new Error('Budget must be a valid non-negative amount.');
+    if (tripStartDate < localDateString()) throw new Error('Trip start date cannot be in the past.');
+    if (resolvedJourneyMode !== 'within_jharkhand' && !String(hometown).trim()) throw new Error('Hometown or origin is required for this journey type.');
+    if (resolvedJourneyMode !== 'within_jharkhand' && !String(entryStation).trim()) throw new Error('Jharkhand entry station is required.');
+    if (resolvedJourneyMode === 'open_jaw' && !String(endLocation).trim()) throw new Error('Final station or city is required for an open-jaw journey.');
+    const trainMode = transport === 'Train';
+    const outboundOrigin = String(trainOriginStation || hometown || startCity).trim();
+    const outboundDestination = String(trainDestinationStation || entryStation || endLocation || startCity).trim();
+    const hometownReturnStation = resolvedJourneyMode === 'hometown_round_trip'
+      ? String(entryStation).trim()
+      : String(returnStation).trim();
+    const outboundReturnStation = String(trainReturnStation || hometownReturnStation || outboundDestination).trim();
+    if (trainMode && (!outboundOrigin || !outboundDestination)) {
+      throw new Error('Origin and destination stations are required for train travel.');
+    }
+    if (trainMode && resolvedJourneyMode !== 'open_jaw' && !returnTripDate) {
+      throw new Error('A return date is required for a round-trip train journey.');
+    }
+    const internalStart = resolvedJourneyMode === 'within_jharkhand' ? startCity : entryStation;
+    const internalEnd = oneWay
+      ? ''
+      : resolvedJourneyMode === 'hometown_round_trip'
+        ? hometownReturnStation
+        : resolvedJourneyMode === 'open_jaw'
+          ? endLocation
+          : startCity;
 
     const allDestinations = db.destinations.list();
     const availableServices = db.services.list();
@@ -99,7 +176,7 @@ export const aiPlannerService = {
         throw new Error(`The selected ${label} is not available for the selected date or traveler count.`);
       }
     }
-    const startCoord = CITY_COORDINATES[startCity] || CITY_COORDINATES.Ranchi;
+    const startCoord = CITY_COORDINATES[internalStart] || CITY_COORDINATES[startCity] || CITY_COORDINATES.Ranchi;
     const destinationMatches = (value) => {
       const normalizedValue = normalizePlaceName(value);
       return allDestinations.find((destination) => {
@@ -185,7 +262,7 @@ export const aiPlannerService = {
     // Shortlist enough candidates for the AI to combine nearby stops on one day
     const requested = scoredDestinations.filter(isRequested);
     const ranked = scoredDestinations.filter((dest) => !requested.includes(dest));
-    const candidateCount = Math.min(Math.max(Number(days) || 1, 1) * 2, scoredDestinations.length);
+    const candidateCount = Math.min(Math.max(tripDays, 1), scoredDestinations.length);
     let shortlisted = [...requested, ...ranked].slice(0, Math.max(candidateCount, requested.length));
 
     // STEP 5: Itinerary Sequencing using TSP Greedy Nearest-Neighbor Heuristic
@@ -219,17 +296,57 @@ export const aiPlannerService = {
     }
 
     const transportPlan = await estimateTransportPlan({
-      startLocation: startCity,
+      startLocation: internalStart,
       destinations: orderedDestinations,
       mode: transport,
       travelers: travelersCount,
-      tripDate: preferences.tripDate
+      tripDate: tripStartDate
     });
-    const lastDestination = orderedDestinations[orderedDestinations.length - 1];
-    const returnDistanceKm = lastDestination
-      ? calculateDistance(lastDestination.lat, lastDestination.lng, startCoord.lat, startCoord.lng)
+    const trainUnavailable = (message) => ({
+      status: 'unavailable',
+      dataClassification: 'unavailable',
+      results: [],
+      message,
+      bookingUrl: 'https://www.irctc.co.in/nget/train-search'
+    });
+    const needsExternalTrain = trainMode || ['hometown_round_trip', 'open_jaw'].includes(resolvedJourneyMode);
+    const outboundTrain = needsExternalTrain
+      ? await searchTrainOptions({
+        from: outboundOrigin,
+        to: outboundDestination,
+        date: tripStartDate,
+        travelClass: preferredTrainClass,
+        passengers: { adults, children, seniors }
+      })
+        .catch((error) => trainUnavailable(error.message))
+      : null;
+    const returnTrain = needsExternalTrain && (trainMode || resolvedJourneyMode === 'hometown_round_trip') && resolvedJourneyMode !== 'open_jaw' && !oneWay
+      ? returnTripDate
+        ? await searchTrainOptions({
+          from: outboundReturnStation,
+          to: outboundOrigin,
+          date: returnTripDate,
+          travelClass: preferredTrainClass,
+          passengers: { adults, children, seniors }
+        }).catch((error) => trainUnavailable(error.message))
+        : trainUnavailable('Return date was not provided; check the return journey on official Indian Railways.')
+      : null;
+    const trainFareByLeg = [outboundTrain, returnTrain]
+      .filter((journey) => journey?.status === 'live')
+      .map((journey) => journey.results
+        .map((result) => Number(result.fare))
+        .filter((fare) => Number.isFinite(fare) && fare >= 0))
+      .filter((fares) => fares.length > 0)
+      .map((fares) => Math.min(...fares));
+    const trainFare = trainMode && trainFareByLeg.length === (returnTrain ? 2 : 1)
+      ? Math.round(trainFareByLeg.reduce((sum, fare) => sum + fare, 0) * travelersCount)
       : 0;
-    const returnCost = Math.max(250, Math.round((returnDistanceKm * 14 + 250) * travelersCount));
+    const lastDestination = orderedDestinations[orderedDestinations.length - 1];
+    const returnCoordinate = CITY_COORDINATES[internalEnd] || startCoord;
+    const returnDistanceKm = lastDestination && !oneWay
+      ? calculateDistance(lastDestination.lat, lastDestination.lng, returnCoordinate.lat, returnCoordinate.lng)
+      : 0;
+    const returnCost = oneWay || trainMode ? 0 : Math.max(250, Math.round((returnDistanceKm * 14 + 250) * travelersCount));
     orderedDestinations.forEach((destination, index) => {
       const leg = transportPlan.intercity[index];
       if (leg) {
@@ -263,10 +380,10 @@ export const aiPlannerService = {
     });
 
     // STEP 6: Output Generation - Construct Structured Day-Wise Plan
-    const totalBudget = Number(budget) || 25000;
+    const totalBudget = Number.isFinite(Number(budget)) && Number(budget) >= 0 ? Number(budget) : 25000;
     const dailyBudget = Math.round(totalBudget / days);
     const dailyReturnLegs = itineraryGroups.map((group, index) => {
-      const dayStart = index === 0 ? startCity : itineraryGroups[index - 1].destinations.at(-1).name;
+      const dayStart = index === 0 ? internalStart : itineraryGroups[index - 1].destinations.at(-1).name;
       const dayEnd = group.destinations.at(-1).name;
       if (selectedHotels.length || dayStart === dayEnd) return null;
       const from = group.destinations.at(-1);
@@ -280,40 +397,54 @@ export const aiPlannerService = {
         estimatedCost: Math.max(250, Math.round((distance * 14 + 250) * travelersCount))
       };
     }).filter(Boolean);
-    const dailyReturnCost = dailyReturnLegs.reduce((sum, leg) => sum + leg.estimatedCost, 0);
-    const entryFeesKnown = orderedDestinations.every((dest) => /\d/.test(String(dest.ticket_info || '')));
+    const entryFeesKnown = orderedDestinations.length > 0 && orderedDestinations.every((dest) => /\d/.test(String(dest.ticket_info || '')));
     const estimatedEntryFees = orderedDestinations.reduce((sum, dest) => {
       const match = String(dest.ticket_info || '').match(/(?:₹|rs\.?|inr)\s*([\d,]+)/i);
       return sum + (match ? Number(match[1].replace(/,/g, '')) * travelersCount : 0);
     }, 0);
-    const entryFees = entryFeesKnown && estimatedEntryFees > 0
-      ? estimatedEntryFees
-      : Math.round(totalBudget * 0.08);
-    const remainingForEstimates = Math.max(0, totalBudget - entryFees);
+    const entryFees = entryFeesKnown ? estimatedEntryFees : 0;
+    const nights = Math.max(0, tripDays - 1);
+    const rooms = Math.max(1, Number(preferences.rooms) || 1);
+    const adultUnits = Math.max(0, Number(adults) || 0);
+    const childUnits = Math.max(0, Number(children) || 0) * 0.5;
+    const seniorUnits = Math.max(0, Number(seniors) || 0) * 0.8;
+    const mealUnits = adultUnits + childUnits + seniorUnits;
     const accommodationCost = selectedHotels.length
-      ? selectedHotels.reduce((sum, hotel) => sum + Number(hotel.price || 0), 0) * Math.max(1, Number(days) || 1)
-      : Math.round(remainingForEstimates * 0.27);
+      ? selectedHotels.reduce((sum, hotel) => sum + (Number(hotel.price) > 0 ? Number(hotel.price) : 0), 0) * nights * rooms
+      : 0;
     const guideCost = selectedGuides.length
-      ? selectedGuides.reduce((sum, guide) => sum + Number(guide.price || 0), 0) * Math.max(1, Number(days) || 1)
+      ? selectedGuides.reduce((sum, guide) => sum + (Number(guide.price) > 0 ? Number(guide.price) : 0), 0) * tripDays
       : 0;
     const packageCost = selectedPackage ? Number(selectedPackage.price || 0) : 0;
+    const foodCost = mealUnits > 0 ? Math.round(mealUnits * tripDays * 450) : 0;
+    const activities = orderedDestinations.length > 0 ? Math.round(mealUnits * orderedDestinations.length * 250) : 0;
+    const transportation = transportPlan.estimatedCosts.total + returnCost + trainFare;
     const budgetBreakdown = {
       package: packageCost,
       guide: guideCost,
-      transportation: transportPlan.estimatedCosts.total + returnCost + dailyReturnCost,
+      transportation,
       accommodation: accommodationCost,
-      food: Math.round(remainingForEstimates * 0.20),
+      food: foodCost,
       entryFees,
-      activities: Math.round(remainingForEstimates * 0.13),
+      activities,
       parkingLocalTravel: 0,
+      taxes: Math.round((packageCost + guideCost + transportation + accommodationCost + food + entryFees + activities) * 0.05),
       priceSources: {
-        package: selectedPackage ? 'database' : 'not_selected',
-        guide: selectedGuides.length ? 'database' : 'not_selected',
-        accommodation: selectedHotels.length ? 'database' : 'estimated',
-        transportation: 'estimated',
-        returnToBase: 'estimated'
+        package: selectedPackage && Number(selectedPackage.price) > 0 ? 'confirmed' : selectedPackage ? 'unavailable' : 'not_selected',
+        guide: selectedGuides.length && selectedGuides.every((guide) => Number(guide.price) > 0) ? 'confirmed' : selectedGuides.length ? 'unavailable' : 'not_selected',
+        accommodation: selectedHotels.length && selectedHotels.every((hotel) => Number(hotel.price) > 0) ? 'confirmed' : selectedHotels.length ? 'unavailable' : 'unavailable',
+        transportation: trainMode && !trainFare ? 'unavailable' : trainMode ? 'confirmed' : 'estimated',
+        localTransport: 'estimated',
+        returnToBase: oneWay ? 'not_applicable' : 'estimated',
+        food: 'estimated',
+        entryFees: entryFeesKnown ? 'confirmed' : 'unavailable',
+        activities: orderedDestinations.length ? 'estimated' : 'unavailable',
+        taxes: 'estimated'
       }
     };
+    const unavailable = Object.entries(budgetBreakdown.priceSources)
+      .filter(([, status]) => status === 'unavailable')
+      .map(([category]) => category);
     const estimatedTotal = Object.values(budgetBreakdown)
       .filter((value) => typeof value === 'number' && Number.isFinite(value))
       .reduce((sum, value) => sum + value, 0);
@@ -322,17 +453,21 @@ export const aiPlannerService = {
       const dayNum = index + 1;
       const destinationsForDay = group.destinations;
       const primaryDestination = destinationsForDay[0];
-      const dayStart = index === 0 ? startCity : itineraryGroups[index - 1].destinations.at(-1).name;
+      const dayStart = index === 0 ? internalStart : itineraryGroups[index - 1].destinations.at(-1).name;
       const dayEnd = destinationsForDay.at(-1).name;
       const returnLeg = dailyReturnLegs.find((leg) => leg.day === dayNum);
       const acts = destinationsForDay.flatMap((destination) => destination.activities || []);
-      const dayDate = preferences.tripDate ? new Date(`${preferences.tripDate}T00:00:00`) : null;
+      const dayDate = tripStartDate ? new Date(`${tripStartDate}T00:00:00`) : null;
       if (dayDate) dayDate.setDate(dayDate.getDate() + index);
       const transportLeg = transportPlan.intercity[index] || null;
 
       return {
         day: dayNum,
-        date: dayDate ? dayDate.toISOString().slice(0, 10) : null,
+        date: dayDate ? [
+          dayDate.getFullYear(),
+          String(dayDate.getMonth() + 1).padStart(2, '0'),
+          String(dayDate.getDate()).padStart(2, '0')
+        ].join('-') : null,
         place: destinationsForDay.map((destination) => destination.name).join(' → '),
         places: destinationsForDay.map((destination) => destination.name),
         title: destinationsForDay.map((destination) => destination.title || destination.name).join(' & '),
@@ -389,18 +524,67 @@ export const aiPlannerService = {
         }
       };
     });
+    while (generatedDays.length < tripDays) {
+      const dayNumber = generatedDays.length + 1;
+      const dayDate = new Date(`${tripStartDate}T00:00:00`);
+      dayDate.setDate(dayDate.getDate() + dayNumber - 1);
+      generatedDays.push({
+        day: dayNumber,
+        date: localDateString(dayDate),
+        place: internalStart,
+        places: [],
+        title: 'Flexible local exploration and rest',
+        type: 'Rest and local planning',
+        district: '',
+        duration: 'Flexible day',
+        routePlan: `Stay near ${internalStart}; choose local activities after confirming timings`,
+        overnight: { type: 'stay_at_destination', location: internalStart, transportCost: 0 },
+        activities: [
+          'Keep time for rest, meals, and check-in or check-out.',
+          'Choose a nearby activity after confirming opening hours and local conditions.'
+        ],
+        transport: null,
+        travelDistanceKm: 0,
+        estimatedTravelTime: 'No intercity travel planned',
+        recommendedAccommodation: selectedHotels.length
+          ? selectedHotels.map((hotel) => hotel.title).join(', ')
+          : 'No approved accommodation selected. Availability needs to be confirmed.',
+        accommodation: [],
+        guide: [],
+        weather: 'Weather information unavailable — check the forecast before travel.',
+        food: food === 'No Preference' ? 'Local cuisine options — verify availability.' : `${food} meal options — verify availability.`,
+        entryFees: 'No destination entry fee was calculated for this flexible day.',
+        safety: 'Follow local signs, opening hours, weather warnings, and destination staff instructions.',
+        budget: dailyBudget,
+        budgetBreakdown: {
+          stay: Math.round(dailyBudget * 0.45),
+          food: Math.round(dailyBudget * 0.25),
+          activities: Math.round(dailyBudget * 0.2),
+          activitiesAndTransit: Math.round(dailyBudget * 0.1),
+          priceStatus: 'estimated'
+        }
+      });
+    }
 
-    const routeList = [startCity, ...orderedDestinations.map(d => d.name), startCity];
+    const routeList = [internalStart, ...orderedDestinations.map(d => d.name), ...(oneWay ? [] : [internalEnd])];
 
     return {
       success: true,
       summary: {
-        days,
+        days: tripDays,
+        tripStartDate,
+        tripEndDate,
+        returnDate: returnTripDate || null,
+        journeyMode: resolvedJourneyMode,
+        origin: resolvedJourneyMode === 'hometown_round_trip' ? hometown : internalStart,
+        entryStation: internalStart,
+        returnStation: internalEnd || null,
+        oneWay: Boolean(oneWay),
         travelers,
         adults: Number(adults) || Number(travelers) || 1,
         children: Number(children) || 0,
         seniors: Number(seniors) || 0,
-        startCity,
+        startCity: internalStart,
         totalBudget,
         dailyBudget,
         style,
@@ -414,16 +598,20 @@ export const aiPlannerService = {
           budget: totalBudget,
           remaining: totalBudget - estimatedTotal,
           costPerPerson: Math.round(estimatedTotal / travelersCount),
+          nights,
+          rooms,
+          unavailable,
           statuses: {
-            transportation: 'estimated',
-            accommodation: 'estimated',
-            food: 'estimated',
-            entryFees: entryFeesKnown ? 'confirmed' : 'estimated',
-            activities: 'estimated',
-              parkingLocalTravel: 'estimated',
-              package: selectedPackage ? 'database' : 'not_selected',
-              guide: selectedGuides.length ? 'database' : 'not_selected'
-          }
+            package: budgetBreakdown.priceSources.package,
+            guide: budgetBreakdown.priceSources.guide,
+            transportation: budgetBreakdown.priceSources.transportation,
+            accommodation: budgetBreakdown.priceSources.accommodation,
+            food: budgetBreakdown.priceSources.food,
+            entryFees: budgetBreakdown.priceSources.entryFees,
+            activities: budgetBreakdown.priceSources.activities,
+            parkingLocalTravel: 'estimated',
+            taxes: budgetBreakdown.priceSources.taxes
+          },
         },
         budgetStatus: estimatedTotal > totalBudget ? 'over_budget' : 'within_budget',
         budgetRecommendation: estimatedTotal > totalBudget
@@ -449,19 +637,39 @@ export const aiPlannerService = {
       transportPlan: {
         ...transportPlan,
         returnToBase: {
-          from: lastDestination?.name || startCity,
-          to: startCity,
+          from: lastDestination?.name || internalStart,
+          to: internalEnd || null,
           distanceKm: returnDistanceKm,
           estimatedCost: returnCost,
-          notes: `Return to base in ${startCity} after the final stop.`
+          mode: trainMode ? 'Train' : transport,
+          bookingType: trainMode ? 'official-railway' : 'self-arranged',
+          bookingUrl: trainMode ? 'https://www.irctc.co.in/' : null,
+          availabilityStatus: oneWay ? 'not_applicable' : trainMode ? 'unavailable' : 'not_checked',
+          notes: oneWay
+            ? 'One-way journey selected; no internal return leg was added.'
+            : trainMode
+              ? 'Train return fare and availability are unavailable unless returned by an authorized railway integration.'
+            : `Return to ${internalEnd} after the final stop.`
         }
       },
-      tspOptimized: true,
-      algorithm: "Hybrid SVD-Collaborative + Cosine Content-Based + Greedy Nearest-Neighbor TSP",
+      journey: {
+        mode: resolvedJourneyMode,
+        origin: resolvedJourneyMode === 'hometown_round_trip' ? hometown || 'Not provided' : internalStart,
+        entryStation: internalStart,
+        returnStation: internalEnd || null,
+        returnDate: returnTripDate || null,
+        preferredTrainClass: preferredTrainClass || null,
+        outboundTrain,
+        returnTrain
+      },
+      tspOptimized: false,
+      algorithm: "Hybrid content/rating shortlist + geographic nearest-neighbor route estimate",
       aiRecommendationRationale: [
         `Tailored specifically for ${style.toLowerCase()} travel with a ${pace.toLowerCase()} pace.`,
-        `Route ordered geographically using TSP nearest-neighbor algorithm and ${transportPlan.selectedMode} travel estimates.`,
-        `Estimated transport cost is ₹${transportPlan.estimatedCosts.total.toLocaleString('en-IN')}; live availability was not checked.`,
+        `Route ordered using a geographic nearest-neighbor estimate; it is not a globally optimized TSP route.`,
+        trainMode && !trainFare
+          ? 'Train fare is unavailable until an authorized integration returns a fare; it is excluded from the estimate.'
+          : `Estimated transport cost is ₹${transportPlan.estimatedCosts.total.toLocaleString('en-IN')}; live availability was not checked.`,
         `Keeps spending strictly balanced within ₹${dailyBudget.toLocaleString('en-IN')} per day.`,
         `Incorporates verified ${accommodation.toLowerCase()} and trusted local guides.`
       ]

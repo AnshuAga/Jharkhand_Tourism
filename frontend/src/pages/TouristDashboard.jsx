@@ -173,13 +173,20 @@ export default function TouristDashboard() {
     setReviewSuccessMsg('');
     try {
       const destObj = destinations.find(d => d.id === selectedDestId);
-      const res = await api.sentiment.submitReview(reviewBooking ? {
+      const res = await api.sentiment.submitReview(reviewBooking ? (
+        ['package', 'guide', 'homestay', 'restaurant', 'transport'].includes(reviewBooking.item_type) ? {
+        bookingId: reviewBooking.id,
+        serviceId: reviewBooking.item_id,
+        serviceName: reviewBooking.item_title,
+        rating,
+        reviewText
+      } : {
         bookingId: reviewBooking.id,
         productId: reviewBooking.item_id,
         productName: reviewBooking.item_title,
         rating,
         reviewText
-      } : {
+      }) : {
         targetType: 'destination',
         targetId: selectedDestId,
         destinationId: selectedDestId,
@@ -724,7 +731,7 @@ export default function TouristDashboard() {
                   <h3 className="text-lg font-bold text-white">{booking.item_title || booking.title || 'Completed journey'}</h3>
                   <p className="text-xs text-slate-400">Trip: {booking.check_in_date || '—'} to {booking.check_out_date || '—'}</p>
                   <p className="text-xs text-emerald-300">Completed: {booking.settled_at ? new Date(booking.settled_at).toLocaleString() : 'Recorded'}</p>
-                  {booking.item_type === 'product' && (
+                  {['product', 'package', 'guide', 'homestay', 'restaurant', 'transport'].includes(booking.item_type) && (
                     <a
                       href="#review-section"
                       onClick={() => setReviewBooking(booking)}

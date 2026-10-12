@@ -26,6 +26,12 @@ function normalizePreferences(input = {}) {
   const interests = toArray(input.interests);
   const categories = toArray(input.categories ?? input.preferredCategories ?? input.preferred_categories);
   const groupType = String(input.groupType ?? input.group_type ?? '').toLowerCase().trim();
+  const travelers = Math.max(1, Number(input.travelers ?? input.groupSize ?? input.group_size) || 1);
+  const startDate = String(input.startDate ?? input.start_date ?? input.tripDate ?? '').slice(0, 10);
+  const endDate = String(input.endDate ?? input.end_date ?? '').slice(0, 10);
+  const destination = String(input.destination ?? input.district ?? '').trim().toLowerCase();
+  const accommodation = toArray(input.accommodation ?? input.accommodationPreferences ?? input.accommodation_preferences);
+  const accessibility = toArray(input.accessibility ?? input.accessibilityRequirements ?? input.accessibility_requirements);
 
   return {
     budget: Number.isFinite(budget) && budget > 0 ? budget : null,
@@ -33,7 +39,13 @@ function normalizePreferences(input = {}) {
     interests,
     categories,
     groupType,
-    startLocation: String(input.startingLocation ?? input.starting_location ?? '').trim()
+    startLocation: String(input.startingLocation ?? input.starting_location ?? '').trim(),
+    travelers,
+    startDate: startDate || null,
+    endDate: endDate || null,
+    destination: destination || null,
+    accommodation,
+    accessibility
   };
 }
 
@@ -285,7 +297,26 @@ function mapRecommendation(item, type, preferences, baseline) {
     activities: toArray(item.activities),
     attractions: toArray(item.attractions),
     interests: toArray(item.interests),
-    available: true,
+    itinerary: item.availability?.itinerary || [],
+    destinations: item.availability?.destinations || [],
+    inclusions: item.availability?.inclusions || item.amenities || [],
+    exclusions: item.availability?.exclusions || [],
+    cancellationPolicy: item.availability?.cancellationPolicy || null,
+    bookingConditions: item.availability?.bookingConditions || item.availability?.bookingNotice || null,
+    roomTypes: item.availability?.roomTypes || [],
+    provider: item.provider_name ? {
+      id: item.provider_id,
+      name: item.provider_name,
+      businessName: item.business_name || null,
+      languages: toArray(item.provider_languages),
+      services: item.provider_specialization || null,
+      location: item.provider_address || item.district
+    } : null,
+    availability: {
+      verified: item.availabilityVerified ?? false,
+      status: item.availabilityStatus || 'confirmation-required'
+    },
+    available: item.availabilityStatus !== 'unavailable',
     ...scored
   };
 }
@@ -300,8 +331,30 @@ export const recommendationService = {
       ? db.destinations.list({ onlyActive: true }) : [];
     const productItems = requestedType === 'all' || requestedType === 'products'
       ? db.products.list({ onlyApproved: true, limit: 100 }).filter(item => Number(item.stock) > 0) : [];
-    const serviceItems = requestedType === 'all' || ['services', 'hotels', 'packages'].includes(requestedType)
-      ? db.services.list({ category: requestedType === 'hotels' ? 'homestay' : requestedType === 'packages' ? 'package' : undefined }) : [];
+    let serviceItems = requestedType === 'all' || ['services', 'hotels', 'packages'].includes(requestedType)
+      ? db.services.list({
+        category: requestedType === 'hotels' ? 'homestay' : requestedType === 'packages' ? 'package' : undefined,
+        district: preferences.destination || undefined,
+        startDate: preferences.startDate,
+        endDate: preferences.endDate,
+        travelers: preferences.travelers,
+        onlyBookable: true
+      }) : [];
+    if (preferences.budget) {
+      serviceItems = serviceItems.filter((item) => Number(item.price) <= preferences.budget);
+    }
+    if (preferences.accommodation.length) {
+      serviceItems = serviceItems.filter((item) =>
+        item.category !== 'homestay' || preferences.accommodation.some((term) =>
+          textFor(item).includes(term)
+        )
+      );
+    }
+    if (preferences.accessibility.length) {
+      serviceItems = serviceItems.filter((item) =>
+        preferences.accessibility.every((requirement) => textFor(item).includes(requirement))
+      );
+    }
 
     const all = [
       ...destinationItems.map(item => mapRecommendation(item, 'destination', preferences, baseline)),

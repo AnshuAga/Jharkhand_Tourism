@@ -31,6 +31,7 @@ import {
   CloudSun,
   BadgeCheck,
   Compass,
+  Loader2,
 } from "lucide-react";
 import NetarhatPlateau from "../assets/Netarhat-Plateau.jpeg";
 import BetlaNationalPark from "../assets/Betla-National-Park.jpg";
@@ -86,6 +87,21 @@ const jharkhandDistricts = [
   "West Singhbhum",
 ];
 
+const jharkhandStationOptions = [
+  "Ranchi",
+  "Jamshedpur",
+  "Dhanbad",
+  "Bokaro",
+  "Deoghar",
+  "Hazaribagh",
+  "Latehar",
+  "Netarhat",
+  "Betla National Park",
+  "Palamu",
+  "Rajrappa",
+  "Parasnath",
+];
+
 const districtCenters = {
   Bokaro: [23.67, 86.15],
   Chatra: [24.2, 84.87],
@@ -124,6 +140,46 @@ function distanceBetween(first, second) {
     * Math.cos((lat2 * Math.PI) / 180)
     * Math.sin(lngDelta / 2) ** 2;
   return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function validateFirstStep(preferences) {
+  const adults = Number(preferences.adults) || 0;
+  const children = Number(preferences.children) || 0;
+  const seniors = Number(preferences.seniors) || 0;
+  const travelers = Number(preferences.travelers) || 0;
+  if (travelers <= 0 || adults + children + seniors <= 0) return 'Add at least one adult, child, or senior traveller.';
+  if (travelers !== adults + children + seniors) return 'Total travellers must equal adults, children, and seniors combined.';
+  if (!Number.isFinite(Number(preferences.budget)) || Number(preferences.budget) < 0) return 'Enter a valid non-negative trip budget.';
+  if (!preferences.days || Number(preferences.days) < 1) return 'Choose at least one trip day.';
+  if (!preferences.tripDate || preferences.tripDate < getTodayDate()) return 'Choose a trip start date from today onward.';
+  if (preferences.journeyMode !== 'within_jharkhand' && !String(preferences.hometown || '').trim()) return 'Enter your hometown or origin station.';
+  if (preferences.journeyMode !== 'within_jharkhand' && !String(preferences.entryStation || '').trim()) return 'Enter the Jharkhand entry station.';
+  if (preferences.journeyMode === 'hometown_round_trip' && (!preferences.returnDate || preferences.returnDate <= preferences.tripDate)) return 'Choose a return date after the trip start date.';
+  if (preferences.journeyMode === 'open_jaw' && !String(preferences.endLocation || '').trim()) return 'Enter the final station or city for your open-jaw journey.';
+  if (preferences.transport === 'Train' && !String(preferences.trainOriginStation || '').trim()) return 'Enter the train origin station.';
+  if (preferences.transport === 'Train' && !String(preferences.trainDestinationStation || '').trim()) return 'Enter the train destination station.';
+  if (preferences.transport === 'Train' && !String(preferences.preferredTrainClass || '').trim()) return 'Choose a preferred train class.';
+  if (preferences.transport === 'Train' && preferences.journeyMode !== 'open_jaw' && preferences.journeyMode !== 'hometown_round_trip' && !String(preferences.trainReturnStation || '').trim()) return 'Enter the train return station.';
+  if (preferences.transport === 'Train' && preferences.journeyMode !== 'open_jaw' && (!preferences.returnDate || preferences.returnDate <= preferences.tripDate)) return 'Choose a return date after the trip start date.';
+  return '';
+}
+
+function getFirstStepErrors(preferences) {
+  const error = validateFirstStep(preferences);
+  if (!error) return {};
+  if (error.includes('traveller')) return { travelers: error };
+  if (error.includes('budget')) return { budget: error };
+  if (error.includes('trip day')) return { days: error };
+  if (error.includes('start date')) return { tripDate: error };
+  if (error.includes('hometown') || error.includes('origin')) return { hometown: error };
+  if (error.includes('entry station')) return { entryStation: error };
+  if (error.includes('return date')) return { returnDate: error };
+  if (error.includes('final station')) return { endLocation: error };
+  if (error.includes('train origin')) return { trainOriginStation: error };
+  if (error.includes('train destination')) return { trainDestinationStation: error };
+  if (error.includes('preferred train class')) return { preferredTrainClass: error };
+  if (error.includes('train return')) return { trainReturnStation: error };
+  return { journey: error };
 }
 
 const destinationData = {
@@ -315,35 +371,35 @@ function isServiceAvailable(service, tripDate, travelers) {
 
 function buildCostEstimate(budget, travelers, days) {
   const totalBudget = getBudgetNumber(budget);
-  const entryFees = Math.round(totalBudget * 0.08);
-  const remaining = totalBudget - entryFees;
+  const food = Math.round(Math.max(1, Number(travelers) || 1) * Math.max(1, Number(days) || 1) * 450);
+  const activities = Math.round(Math.max(1, Number(travelers) || 1) * Math.max(1, Number(days) || 1) * 250);
   const breakdown = {
-    transportation: Math.round(remaining * 0.32),
-    accommodation: Math.round(remaining * 0.27),
-    food: Math.round(remaining * 0.20),
-    entryFees,
-    activities: Math.round(remaining * 0.13),
-    parkingLocalTravel: 0
+    transportation: 0,
+    accommodation: 0,
+    food,
+    entryFees: 0,
+    activities,
+    parkingLocalTravel: 0,
+    taxes: 0
   };
-  breakdown.parkingLocalTravel = Math.max(
-    0,
-    totalBudget - Object.values(breakdown).reduce((sum, value) => sum + value, 0)
-  );
+  const estimatedTotal = food + activities;
   return {
     ...breakdown,
-    estimatedTotal: Object.values(breakdown).reduce((sum, value) => sum + value, 0),
+    estimatedTotal,
     budget: totalBudget,
-    remaining: totalBudget - Object.values(breakdown).reduce((sum, value) => sum + value, 0),
-    costPerPerson: Math.round(Object.values(breakdown).reduce((sum, value) => sum + value, 0) / Math.max(1, Number(travelers) || 1)),
+    remaining: totalBudget - estimatedTotal,
+    costPerPerson: Math.round(estimatedTotal / Math.max(1, Number(travelers) || 1)),
     statuses: {
-      transportation: 'estimated',
-      accommodation: 'estimated',
+      transportation: 'unavailable',
+      accommodation: 'unavailable',
       food: 'estimated',
-      entryFees: 'estimated',
+      entryFees: 'unavailable',
       activities: 'estimated',
-      parkingLocalTravel: 'estimated'
+      parkingLocalTravel: 'unavailable',
+      taxes: 'unavailable'
     },
-    source: 'frontend estimate',
+    unavailable: ['transportation', 'accommodation', 'entryFees', 'parkingLocalTravel', 'taxes'],
+    source: 'fallback estimate; generate the itinerary for route and service prices',
     days
   };
 }
@@ -358,13 +414,22 @@ function formatCurrency(value) {
 }
 
 function getTodayDate() {
-  return new Date().toISOString().split('T')[0];
+  const date = new Date();
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
 }
 
 function addDays(dateString, days) {
   const date = new Date(`${dateString}T00:00:00`);
   date.setDate(date.getDate() + Number(days) - 1);
-  return date.toISOString().split('T')[0];
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
 }
 
 function resolveServiceImage(service) {
@@ -394,8 +459,15 @@ export default function AIPlanner() {
   const [verifiedFares, setVerifiedFares] = useState({});
   const [checklist, setChecklist] = useState({});
   const [requiredPlaces, setRequiredPlaces] = useState([]);
+  const [draftSaved, setDraftSaved] = useState(false);
+  const [draftId, setDraftId] = useState('');
+  const [draftLoading, setDraftLoading] = useState(true);
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [optionsLoading, setOptionsLoading] = useState(true);
 
   const [form, setForm] = useState({
+    journeyMode: "within_jharkhand",
     days: 4,
     budget: 30000,
     travelers: 2,
@@ -405,6 +477,17 @@ export default function AIPlanner() {
     tripDate: getTodayDate(),
     month: "October",
     startCity: "Ranchi",
+    hometown: "",
+    entryStation: "Ranchi",
+    returnStation: "Ranchi",
+    endLocation: "",
+    oneWay: false,
+    returnDate: "",
+    preferredTrainClass: "",
+    trainOriginStation: "",
+    trainDestinationStation: "",
+    trainReturnStation: "",
+    trainBookingNotes: "",
     style: "Relaxed & Scenic",
     interests: ["nature"],
     places: [],
@@ -416,10 +499,51 @@ export default function AIPlanner() {
     packageServiceId: "",
     guideServiceIds: [],
     hotelServiceIds: [],
+    rooms: 1,
   });
 
   useEffect(() => {
-    api.destinations.getAll().then((res) => {
+    const restoreLocalDraft = () => {
+      const savedDraft = localStorage.getItem('jharkhand-planner-draft');
+      if (!savedDraft) return;
+      try {
+        const restored = JSON.parse(savedDraft);
+        setForm((previous) => ({
+          ...previous,
+          ...restored,
+          travelers: (Number(restored.adults) || 0) + (Number(restored.children) || 0) + (Number(restored.seniors) || 0)
+        }));
+      } catch {
+        localStorage.removeItem('jharkhand-planner-draft');
+      }
+    };
+    api.itinerary.listDrafts()
+      .then((response) => {
+        const draft = response?.drafts?.[0];
+        if (draft?.preferences) {
+          setDraftId(draft.id);
+          setForm((previous) => {
+            const preferences = { ...previous, ...draft.preferences };
+            return {
+              ...preferences,
+              travelers: (Number(preferences.adults) || 0) + (Number(preferences.children) || 0) + (Number(preferences.seniors) || 0)
+            };
+          });
+          if (draft.itinerary) setItinerary(draft.itinerary);
+          if (draft.itinerary) setStep(5);
+        } else restoreLocalDraft();
+      })
+      .catch(restoreLocalDraft)
+      .finally(() => setDraftLoading(false));
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('jharkhand-planner-draft', JSON.stringify(form));
+  }, [form]);
+
+  useEffect(() => {
+    Promise.all([
+      api.destinations.getAll().then((res) => {
       if (res && res.success && Array.isArray(res.data) && res.data.length > 0) {
         const districts = res.data.map((d) => d.district).filter(Boolean);
         setDestinationRecords(res.data);
@@ -427,8 +551,12 @@ export default function AIPlanner() {
           Array.from(new Set([...jharkhandDistricts, ...districts])).sort()
         );
       }
-    }).catch(console.warn);
-    api.marketplace.getData().then((res) => setServiceOptions(res.services || [])).catch(console.warn);
+      }),
+      api.marketplace.getData().then((res) => setServiceOptions(res.services || []))
+    ]).catch((error) => {
+      setBookingError('Some travel options could not be loaded. You can continue, or try again later.');
+      console.warn('Planner options request failed.', error);
+    }).finally(() => setOptionsLoading(false));
   }, []);
 
   useEffect(() => {
@@ -479,6 +607,10 @@ export default function AIPlanner() {
         places: prev.places.includes(pre) ? prev.places : [...prev.places, pre],
       }));
     }
+    if (location.state?.packageServiceId) {
+      setForm((previous) => ({ ...previous, packageServiceId: location.state.packageServiceId }));
+      setStep(3);
+    }
   }, [location.state]);
 
   useEffect(() => {
@@ -510,10 +642,53 @@ export default function AIPlanner() {
   }, [destinationRecords, form.startCity, requiredPlaces]);
 
   const updateForm = (key, value) => {
+    setFieldErrors((previous) => {
+      if (!previous[key]) return previous;
+      const next = { ...previous };
+      delete next[key];
+      return next;
+    });
     setForm((previous) => ({
       ...previous,
       [key]: value,
+      ...(key === "transport" && value !== "Train" ? { preferredTrainClass: "" } : {}),
+      ...(key === "entryStation" && previous.journeyMode === "hometown_round_trip"
+        ? { returnStation: value, trainReturnStation: value }
+        : {}),
     }));
+  };
+
+  const changeJourneyMode = (journeyMode) => {
+    setForm((previous) => ({
+      ...previous,
+      journeyMode,
+      ...(journeyMode === 'within_jharkhand'
+        ? { hometown: '', entryStation: '', returnStation: '', endLocation: '', oneWay: false }
+        : journeyMode === 'hometown_round_trip'
+          ? { endLocation: '', returnStation: previous.entryStation || '', trainReturnStation: previous.entryStation || '', oneWay: false }
+          : { returnStation: '' })
+    }));
+  };
+
+  const saveDraft = async () => {
+    if (draftSaving) return;
+    setDraftSaving(true);
+    try {
+      const payload = { title: `${form.journeyMode} journey`, preferences: form, itinerary };
+      const response = draftId
+        ? await api.itinerary.updateDraft(draftId, payload)
+        : await api.itinerary.createDraft(payload);
+      setDraftId(response.draft.id);
+      setDraftSaved(true);
+      window.setTimeout(() => setDraftSaved(false), 2500);
+    } catch (error) {
+      localStorage.setItem('jharkhand-planner-draft', JSON.stringify(form));
+      setDraftSaved(true);
+      window.setTimeout(() => setDraftSaved(false), 2500);
+      console.warn('Backend draft save failed; local recovery copy created.', error);
+    } finally {
+      setDraftSaving(false);
+    }
   };
 
   const toggleInterest = (interest) => {
@@ -543,10 +718,13 @@ export default function AIPlanner() {
   };
 
   const generateItinerary = async (preferences = form) => {
-    if (!preferences.tripDate || preferences.tripDate < getTodayDate()) {
-      setBookingError('Please choose a valid trip date from today onward.');
+    const firstStepError = validateFirstStep(preferences);
+    if (firstStepError) {
+      setFieldErrors(getFirstStepErrors(preferences));
+      setBookingError(firstStepError);
       return;
     }
+    setFieldErrors({});
     setGenerating(true);
     setBookingError('');
 
@@ -565,6 +743,9 @@ export default function AIPlanner() {
           days,
           totalBudget: res.summary.totalBudget,
           dailyBudget: res.summary.dailyBudget,
+          tripStartDate: res.summary.tripStartDate || preferences.tripDate,
+          tripEndDate: res.summary.tripEndDate || addDays(preferences.tripDate, preferences.days),
+          journey: res.journey || null,
           route: Array.isArray(res.route) ? res.route : [],
           costEstimate: res.summary.costEstimate || buildCostEstimate(preferences.budget, preferences.travelers, preferences.days),
           transportPlan: res.transportPlan || { intercity: [], localTransport: [], estimatedTotalTransportCost: 0 },
@@ -752,6 +933,7 @@ export default function AIPlanner() {
       packageServiceId: "",
       guideServiceIds: [],
       hotelServiceIds: [],
+      rooms: 1,
     });
   };
 
@@ -761,25 +943,40 @@ export default function AIPlanner() {
       return;
     }
 
+      const selectedIds = [
+        form.packageServiceId,
+        ...form.guideServiceIds,
+        ...form.hotelServiceIds
+      ].filter(Boolean);
+    if (!selectedIds.length) {
+      setBookingError('Select a guide, hotel, or package before booking.');
+      return;
+    }
+    const selectedServices = serviceOptions.filter((service) => selectedIds.includes(service.id));
+    const reviewLines = [
+      `Services: ${selectedServices.map((service) => service.title).join(', ') || 'Selected services'}`,
+      `Dates: ${form.tripDate} to ${addDays(form.tripDate, form.days)}`,
+      `Travellers: ${form.travelers}`,
+      `Planner estimate: ${formatCurrency(itinerary?.costEstimate?.estimatedTotal || 0)}`,
+      'The server will re-check availability and use server-side prices before payment.'
+    ];
+    if (!window.confirm(`Review and submit this booking request:\n\n${reviewLines.join('\n')}\n\nContinue to secure payment?`)) return;
+
     setBookingLoading(true);
     setBookingError('');
     try {
       const Razorpay = await loadRazorpay();
       const routeText = itinerary?.route?.join(' ➔ ') || 'Jharkhand Circuit';
       const title = `${form.days}-Day ${form.style} Expedition (${routeText})`;
-      const selectedIds = [
-        form.packageServiceId,
-        ...form.guideServiceIds,
-        ...form.hotelServiceIds
-      ].filter(Boolean);
-      if (!selectedIds.length) throw new Error('Select a guide, hotel, or package before booking.');
+      const idempotencyKey = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const serviceBooking = await api.payments.createBundleOrder({
         items: selectedIds.map((serviceId) => ({ serviceId })),
         travelers: form.travelers,
         days: form.days,
         checkInDate: form.tripDate,
-        checkOutDate: addDays(form.tripDate, form.days)
-      });
+        checkOutDate: addDays(form.tripDate, form.days),
+        rooms: form.rooms
+      }, idempotencyKey);
       const verified = await new Promise((resolve, reject) => {
           const checkout = new Razorpay({
             key: serviceBooking.keyId,
@@ -826,7 +1023,7 @@ export default function AIPlanner() {
   }, [step]);
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 pt-32 pb-20 px-5 md:px-8">
+    <div className={`min-h-screen ${step === 5 ? 'bg-[#292725]' : 'bg-[#070b14]'} text-slate-100 pt-32 pb-20 px-5 md:px-8`}>
 
       {/* HERO */}
       <div className="max-w-6xl mx-auto mb-12">
@@ -836,6 +1033,12 @@ export default function AIPlanner() {
             <Sparkles size={15} />
             Powered by BirsaAI
           </div>
+
+          {draftLoading && !itinerary && (
+            <div className="mx-auto mb-6 flex max-w-4xl items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs text-slate-400" role="status">
+              <Loader2 size={14} className="animate-spin text-amber-400" /> Restoring your saved planner draft...
+            </div>
+          )}
           <h1 className="mt-6 text-4xl md:text-6xl font-serif font-bold leading-tight">
             Your Journey.
             <span className="block text-amber-300 italic">
@@ -854,22 +1057,7 @@ export default function AIPlanner() {
       {/* PROGRESS */}
       {!itinerary && (
         <div className="max-w-4xl mx-auto mb-8">
-
-          <div className="flex justify-between text-xs uppercase tracking-widest text-slate-500 mb-3">
-            <span>Trip Details</span>
-            <span>Preferences</span>
-            <span>Guides & Hotels</span>
-            <span>Destinations</span>
-            <span>Journey</span>
-          </div>
-
-          <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-            <motion.div
-              className="h-full bg-gradient-to-r from-amber-400 to-orange-500"
-              animate={{ width: `${progress}%` }}
-              transition={{ duration: 0.4 }}
-            />
-          </div>
+          <StepProgress step={step} progress={progress} onStepChange={setStep} />
         </div>
       )}
 
@@ -894,13 +1082,34 @@ export default function AIPlanner() {
 
               <div className="grid md:grid-cols-2 gap-6 mt-8">
 
-                <Field label="How many days?">
+                <Field label="Journey type" error={fieldErrors.journey}>
+                  <select value={form.journeyMode} onChange={(e) => changeJourneyMode(e.target.value)} className="input">
+                    <option value="within_jharkhand">Round trip within Jharkhand</option>
+                    <option value="hometown_round_trip">From my hometown and back</option>
+                    <option value="open_jaw">One-way / open-jaw journey</option>
+                  </select>
+                  <p className="mt-2 text-[10px] text-slate-500">Train schedules and availability are not live in this planner; official booking verification is required.</p>
+                </Field>
+
+                <Field label="Hotel rooms (when a hotel is selected)">
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={form.rooms}
+                    onChange={(e) => updateForm("rooms", Math.max(1, Number(e.target.value) || 1))}
+                    className="input"
+                  />
+                  <p className="mt-1 text-[10px] text-slate-500">Accommodation is charged per room and overnight stay, not per traveller.</p>
+                </Field>
+
+                <Field label="How many days?" error={fieldErrors.days}>
                   <select
                     value={form.days}
                     onChange={(e) => updateForm("days", Number(e.target.value))}
                     className="input"
                   >
-                    {[2, 3, 4, 5, 6, 7, 8, 9, 10].map((day) => (
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((day) => (
                       <option key={day} value={day}>
                         {day} Days
                       </option>
@@ -908,7 +1117,7 @@ export default function AIPlanner() {
                   </select>
                 </Field>
 
-                <Field label="Traveler breakdown">
+                <Field label="Traveler breakdown" error={fieldErrors.travelers}>
                   <div className="grid grid-cols-3 gap-2">
                     {[
                       ['adults', 'Adults'],
@@ -925,7 +1134,7 @@ export default function AIPlanner() {
                           onChange={(e) => {
                             const next = Math.max(0, Number(e.target.value));
                             updateForm(key, next);
-                                             updateForm('travelers', Math.max(1, (key === 'adults' ? next : form.adults) + (key === 'children' ? next : form.children) + (key === 'seniors' ? next : form.seniors)));
+                                             updateForm('travelers', (key === 'adults' ? next : form.adults) + (key === 'children' ? next : form.children) + (key === 'seniors' ? next : form.seniors));
                           }}
                           className="mt-2 w-full bg-transparent text-slate-200 outline-none"
                         />
@@ -934,7 +1143,7 @@ export default function AIPlanner() {
                   </div>
                 </Field>
 
-               <Field label="Number of travelers">
+               <Field label="Number of travelers" error={fieldErrors.travelers}>
                     <div className="flex items-center bg-slate-950/70 border border-slate-800 rounded-xl overflow-hidden focus-within:border-amber-400 transition">
                         <div className="pl-4 text-slate-500">
                         <Users size={18} />
@@ -952,7 +1161,7 @@ export default function AIPlanner() {
                     </div>
                 </Field>
 
-                <Field label="Total trip budget">
+                <Field label="Total trip budget" error={fieldErrors.budget}>
                     <div className="flex items-center bg-slate-950/70 border border-slate-800 rounded-xl overflow-hidden focus-within:border-amber-400 transition">
 
                         <div className="pl-4 text-slate-500">
@@ -965,7 +1174,7 @@ export default function AIPlanner() {
 
                         <input
                         type="number"
-                        min="5000"
+                        min="0"
                         value={form.budget}
                         onChange={(e) =>
                             updateForm("budget", Number(e.target.value))
@@ -1001,7 +1210,7 @@ export default function AIPlanner() {
                   </select>
                 </Field>
 
-                <Field label="Trip start date">
+                <Field label="Trip start date" error={fieldErrors.tripDate}>
                   <input
                     type="date"
                     min={getTodayDate()}
@@ -1010,10 +1219,10 @@ export default function AIPlanner() {
                     className="input"
                     required
                   />
-                  <p className="mt-2 text-[10px] text-slate-500">Choose today or a future date. Return date: {form.tripDate ? addDays(form.tripDate, form.days) : 'Select a start date'}.</p>
+                  <p className="mt-2 text-[10px] text-slate-500">Choose today or a future date. Final sightseeing day: {form.tripDate ? addDays(form.tripDate, form.days) : 'Select a start date'}.</p>
                 </Field>
 
-                <Field label="Starting point">
+                {form.journeyMode === "within_jharkhand" && <Field label="Starting point within Jharkhand">
                     <div className="flex items-center bg-slate-950/70 border border-slate-800 rounded-xl overflow-hidden focus-within:border-amber-400 transition">
 
                         <div className="pl-4 text-slate-500">
@@ -1025,7 +1234,7 @@ export default function AIPlanner() {
                         onChange={(e) =>
                             updateForm("startCity", e.target.value)
                         }
-                        className="w-full bg-transparent border-0 outline-none px-4 py-3.5 text-slate-200"
+                        className="planner-select w-full bg-transparent border-0 outline-none px-4 py-3.5 text-slate-200"
                         >
                         {availableStartLocations.map((locationName) => (
                           <option key={locationName}>{locationName}</option>
@@ -1033,9 +1242,91 @@ export default function AIPlanner() {
                         </select>
 
                     </div>
-                </Field>
+                </Field>}
 
-                <Field label="How do you want to travel?">
+                {form.journeyMode !== "within_jharkhand" && (
+                  <Field label="Hometown or origin city or station" error={fieldErrors.hometown}>
+                    <input className="input" value={form.hometown} onChange={(e) => updateForm("hometown", e.target.value)} placeholder="Example: Kolkata" />
+                    <p className="mt-2 text-[10px] text-slate-500">Used as the journey origin; enter the city or station you will actually depart from.</p>
+                  </Field>
+                )}
+
+                {form.journeyMode !== "within_jharkhand" && (
+                  <Field label="Jharkhand entry station" error={fieldErrors.entryStation}>
+                    <select
+                      className="input"
+                      value={form.entryStation}
+                      onChange={(e) => updateForm("entryStation", e.target.value)}
+                      aria-label="Jharkhand entry station"
+                    >
+                      <option value="">Select entry station</option>
+                      {jharkhandStationOptions.map((station) => (
+                        <option key={station} value={station}>{station}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+
+                {form.journeyMode === "open_jaw" && (
+                  <>
+                    <Field label="Final station or city" error={fieldErrors.endLocation}>
+                      <input className="input" value={form.endLocation} onChange={(e) => updateForm("endLocation", e.target.value)} placeholder="Example: Daltonganj" />
+                    </Field>
+                    <label className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-300">
+                      <input type="checkbox" checked={form.oneWay} onChange={(e) => updateForm("oneWay", e.target.checked)} />
+                      One-way journey with no internal return leg
+                    </label>
+                  </>
+                )}
+
+                {form.journeyMode === "hometown_round_trip" && (
+                  <>
+                    <Field label="Return travel date" error={fieldErrors.returnDate}>
+                      <input type="date" className="input" min={form.tripDate || getTodayDate()} value={form.returnDate} onChange={(e) => updateForm("returnDate", e.target.value)} aria-label="Return travel date" />
+                    </Field>
+                  </>
+                )}
+
+                {form.transport === "Train" && (
+                  <Field label="Preferred train class" error={fieldErrors.preferredTrainClass}>
+                    <select className="input" value={form.preferredTrainClass} onChange={(e) => updateForm("preferredTrainClass", e.target.value)} required aria-label="Preferred train class">
+                      <option value="">Select preferred class</option>
+                      <option value="1A">AC First Class (1A)</option>
+                      <option value="2A">AC 2 Tier (2A)</option>
+                      <option value="3A">AC 3 Tier (3A)</option>
+                      <option value="SL">Sleeper (SL)</option>
+                      <option value="CC">Chair Car (CC)</option>
+                    </select>
+                    <p className="mt-2 text-[10px] text-slate-500">Required for train journeys. Live fares and seats are shown only by an authorized integration.</p>
+                  </Field>
+                )}
+
+                {form.transport === "Train" && (
+                  <div className="md:col-span-2 rounded-2xl border border-amber-400/20 bg-amber-400/5 p-5">
+                    <p className="text-xs font-bold uppercase tracking-widest text-amber-300">Train journey details</p>
+                    <p className="mt-2 text-xs text-slate-400">Enter the stations used for intercity rail. Live schedules, fares and availability appear only when an authorized integration returns them.</p>
+                    <div className="mt-4 grid gap-4 md:grid-cols-2">
+                      <Field label="Origin station" error={fieldErrors.trainOriginStation}>
+                        <input className="input" value={form.trainOriginStation} onChange={(e) => updateForm("trainOriginStation", e.target.value)} placeholder="Example: Kolkata" />
+                      </Field>
+                      <Field label="Destination station" error={fieldErrors.trainDestinationStation}>
+                        <input className="input" value={form.trainDestinationStation} onChange={(e) => updateForm("trainDestinationStation", e.target.value)} placeholder="Example: Ranchi" />
+                      </Field>
+                      {form.journeyMode !== "open_jaw" && form.journeyMode !== "hometown_round_trip" && (
+                        <>
+                          <Field label="Return station" error={fieldErrors.trainReturnStation}>
+                            <input className="input" value={form.trainReturnStation} onChange={(e) => updateForm("trainReturnStation", e.target.value)} placeholder="Example: Ranchi" />
+                          </Field>
+                          <Field label="Return journey date" error={fieldErrors.returnDate}>
+                            <input type="date" className="input" min={form.tripDate || getTodayDate()} value={form.returnDate} onChange={(e) => updateForm("returnDate", e.target.value)} />
+                          </Field>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <Field label="Local transport preference" error={fieldErrors.transport}>
                   <select
                     value={form.transport}
                     onChange={(e) =>
@@ -1051,7 +1342,23 @@ export default function AIPlanner() {
 
               </div>
 
-              <NextButton onClick={() => setStep(2)} />
+              <div className="flex items-center justify-between gap-3">
+                <button type="button" onClick={saveDraft} disabled={draftSaving} className="rounded-xl border border-slate-700 px-4 py-3 text-xs font-semibold text-slate-300 hover:border-amber-400 disabled:cursor-wait disabled:opacity-60">
+                  {draftSaving ? 'Saving...' : 'Save draft'}
+                </button>
+                {draftSaved && <span className="text-xs text-emerald-300">Draft saved</span>}
+                <NextButton onClick={() => {
+                  const error = validateFirstStep(form);
+                  if (error) {
+                    setFieldErrors(getFirstStepErrors(form));
+                    setBookingError(error);
+                    return;
+                  }
+                  setFieldErrors({});
+                  setBookingError('');
+                  setStep(2);
+                }} />
+              </div>
             </div>
           </motion.div>
         )}
@@ -1179,12 +1486,36 @@ export default function AIPlanner() {
             <div className="bg-[#0b1326]/80 border border-slate-800 rounded-3xl p-6 md:p-10 backdrop-blur-xl shadow-2xl">
               <StepHeading
                 icon={<Hotel />}
-                title="Choose your guide and stay"
-                description="Select from the currently available certified guides and hotels. These choices will be secured with your itinerary booking."
+                title="Explore approved options"
+                description="Review matching destinations, approved packages, available hotels and guides before reviewing your route."
               />
 
               <div className="mt-8 space-y-8">
-                {serviceOptions.some((service) => service.category === 'package') && (
+                <div>
+                  <h3 className="mb-3 text-sm font-bold uppercase tracking-widest text-amber-400">Matching destinations</h3>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {availablePlaces.slice(0, 6).map((place) => {
+                      const active = form.places.includes(place);
+                      return (
+                        <button
+                          key={place}
+                          type="button"
+                          onClick={() => togglePlace(place)}
+                          className={`rounded-xl border p-3 text-left text-xs transition ${active ? 'border-amber-400 bg-amber-400/10 text-amber-300' : 'border-slate-800 bg-slate-950/60 text-slate-300 hover:border-slate-600'}`}
+                        >
+                          <span className="font-semibold">{place}</span>
+                          <span className="mt-1 block text-[10px] text-slate-500">{destinationData[place]?.type || 'Destination'}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-2 text-[10px] text-slate-500">Selected destinations remain available to adjust in the route review step.</p>
+                </div>
+                {optionsLoading ? (
+                  <div className="flex items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/60 p-5 text-xs text-slate-400" role="status">
+                    <Loader2 size={14} className="animate-spin text-amber-400" /> Loading approved packages, hotels and guides...
+                  </div>
+                ) : serviceOptions.some((service) => service.category === 'package') && (
                   <div>
                     <h3 className="mb-3 text-sm font-bold uppercase tracking-widest text-amber-400">Travel package</h3>
                     <div className="grid gap-3 md:grid-cols-2">
@@ -1336,8 +1667,8 @@ export default function AIPlanner() {
 
               <StepHeading
                 icon={<Navigation />}
-                title="Where do you want to go?"
-                description={`Showing nearby, practical destinations from ${form.startCity}. BirsaAI will optimize the final route.`}
+                title="Review your route"
+                description={`Confirm the destinations BirsaAI should consider from ${form.startCity}, then generate your itinerary.`}
               />
 
               <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-3 mt-8">
@@ -1405,7 +1736,7 @@ export default function AIPlanner() {
 
               <div className="flex justify-between mt-10">
 
-                <BackButton onClick={() => setStep(2)} />
+                <BackButton onClick={() => setStep(3)} />
 
                 <button
                   type="button"
@@ -1447,7 +1778,7 @@ export default function AIPlanner() {
             key="result"
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
-            className="max-w-6xl mx-auto"
+            className="birsa-final-page max-w-6xl mx-auto"
           >
 
             {/* RESULT HEADER */}
@@ -1457,6 +1788,34 @@ export default function AIPlanner() {
                 <Check size={15} />
                 Journey Optimized
               </div>
+
+              {itinerary.journey && (
+                <div className="mx-auto mt-5 max-w-3xl rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-left text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="font-bold uppercase tracking-widest text-amber-300">
+                      {itinerary.journey.mode.replaceAll('_', ' ')}
+                    </span>
+                    <span className="text-slate-400">
+                      {itinerary.tripStartDate} to {itinerary.tripEndDate}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-slate-300">
+                    {itinerary.journey.mode === 'within_jharkhand'
+                      ? `Starting point: ${itinerary.journey.entryStation}`
+                      : `${itinerary.journey.origin} → ${itinerary.journey.entryStation}${itinerary.journey.returnStation ? ` → ${itinerary.journey.returnStation}` : ' · one-way internal route'}`}
+                  </p>
+                  {(itinerary.journey.outboundTrain || itinerary.journey.returnTrain) && (
+                    <TrainBookingAssistant
+                      outbound={itinerary.journey.outboundTrain}
+                      returnJourney={itinerary.journey.returnTrain}
+                      bookingNotes={form.trainBookingNotes}
+                      onNotesChange={(value) => updateForm('trainBookingNotes', value)}
+                      onSaveDraft={saveDraft}
+                      draftSaving={draftSaving}
+                    />
+                  )}
+                </div>
+              )}
 
               <h2 className="text-3xl md:text-5xl font-serif font-bold mt-5">
                 Your Jharkhand Story
@@ -1723,6 +2082,13 @@ export default function AIPlanner() {
             <TripCostEstimate
               costEstimate={itinerary.costEstimate}
               travelers={form.travelers}
+              selectedServices={serviceOptions.filter((service) => [
+                form.packageServiceId,
+                ...form.guideServiceIds,
+                ...form.hotelServiceIds
+              ].includes(service.id))}
+              startDate={form.tripDate}
+              endDate={addDays(form.tripDate, form.days)}
               budgetStatus={itinerary.budgetStatus}
               budgetRecommendation={itinerary.budgetRecommendation}
               onBook={handleBookItinerary}
@@ -2026,13 +2392,60 @@ function StepHeading({ icon, title, description }) {
   );
 }
 
-function Field({ label, children }) {
+function StepProgress({ step, progress, onStepChange }) {
+  const steps = [
+    'Understand Your Trip',
+    'Travel Preferences',
+    'Explore Options',
+    'Review Itinerary',
+    'Review and Book'
+  ];
+  return (
+    <div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {steps.map((label, index) => {
+          const stepNumber = index + 1;
+          const isCurrent = stepNumber === step;
+          const isAvailable = stepNumber <= step;
+          return (
+            <button
+              key={label}
+              type="button"
+              onClick={() => isAvailable && onStepChange(stepNumber)}
+              disabled={!isAvailable}
+              aria-current={isCurrent ? 'step' : undefined}
+              className={`rounded-xl border px-2 py-2 text-left text-[10px] uppercase tracking-wider transition sm:text-center ${
+                isCurrent
+                  ? 'border-amber-400 bg-amber-400/10 text-amber-300'
+                  : isAvailable
+                    ? 'border-slate-700 bg-slate-950/40 text-slate-300 hover:border-amber-400/60'
+                    : 'cursor-not-allowed border-slate-800 bg-slate-950/20 text-slate-600'
+              }`}
+            >
+              <span className="mr-1 text-amber-400">{stepNumber}</span>{label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-800" aria-label={`Planner progress: ${progress}%`}>
+        <motion.div
+          className="h-full bg-gradient-to-r from-amber-400 to-orange-500"
+          animate={{ width: `${progress}%` }}
+          transition={{ duration: 0.4 }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, error, children }) {
   return (
     <div className="mb-6">
       <label className="block text-xs uppercase tracking-widest text-slate-500 mb-3">
         {label}
       </label>
       {children}
+      {error && <p className="mt-2 text-xs text-red-300" role="alert">{error}</p>}
     </div>
   );
 }
@@ -2097,11 +2510,11 @@ function SummaryCard({ icon, label, value }) {
   );
 }
 
-function TripCostEstimate({ costEstimate, travelers, budgetStatus, budgetRecommendation, onBook, bookingLoading }) {
+function TripCostEstimate({ costEstimate, travelers, selectedServices = [], startDate, endDate, budgetStatus, budgetRecommendation, onBook, bookingLoading }) {
   if (!costEstimate) return null;
   const isOverBudget = Number(costEstimate.remaining) < 0;
   const calculatedRecommendation = isOverBudget
-    ? `Estimated costs exceed the budget by ${formatCurrency(Math.abs(Number(costEstimate.remaining) || 0))}. Consider Bus, fewer destinations, or a lower-cost stay.`
+    ? `Estimated costs exceed the budget by ${formatCurrency(Math.abs(Number(costEstimate.remaining) || 0))}. Consider alternative transport, fewer destinations, a lower-cost stay, or a shorter trip.`
     : 'Estimated costs are within the selected budget. Verify live fares and prices before booking.';
   const rows = [
     ['Package', costEstimate.package, costEstimate.statuses?.package],
@@ -2111,7 +2524,8 @@ function TripCostEstimate({ costEstimate, travelers, budgetStatus, budgetRecomme
     ['Food', costEstimate.food, costEstimate.statuses?.food],
     ['Entry Fees', costEstimate.entryFees, costEstimate.statuses?.entryFees],
     ['Activities', costEstimate.activities, costEstimate.statuses?.activities],
-    ['Parking / Local Travel', costEstimate.parkingLocalTravel, costEstimate.statuses?.parkingLocalTravel]
+    ['Parking / Local Travel', costEstimate.parkingLocalTravel, costEstimate.statuses?.parkingLocalTravel],
+    ['Taxes / additional charges', costEstimate.taxes, costEstimate.statuses?.taxes]
   ];
   return (
     <section className="mb-8 rounded-3xl border border-slate-800 bg-[#0b1326] p-6 md:p-8">
@@ -2130,7 +2544,7 @@ function TripCostEstimate({ costEstimate, travelers, budgetStatus, budgetRecomme
           <div key={label} className="flex items-center justify-between gap-4 py-3 text-sm">
             <span className="text-slate-300">{label}</span>
             <span className="text-right">
-              <strong className="text-white">{formatCurrency(value)}</strong>
+              <strong className="text-white">{status === 'unavailable' ? 'Unavailable' : formatCurrency(value)}</strong>
               <span className={`ml-2 text-[10px] uppercase tracking-wider ${status === 'confirmed' ? 'text-emerald-400' : 'text-amber-400'}`}>
                 {status || 'estimated'}
               </span>
@@ -2143,6 +2557,15 @@ function TripCostEstimate({ costEstimate, travelers, budgetStatus, budgetRecomme
         <CostTotal label="Budget" value={costEstimate.budget} />
         <CostTotal label="Remaining" value={costEstimate.remaining} positive={costEstimate.remaining >= 0} />
       </div>
+      {selectedServices.length > 0 && (
+        <div className="mt-5 rounded-xl border border-slate-700 bg-slate-950/40 px-4 py-3 text-xs text-slate-300">
+          <p className="font-semibold text-white">Booking review</p>
+          <p className="mt-1">Services: {selectedServices.map((service) => service.title).join(', ')}</p>
+          <p className="mt-1">Dates: {startDate} to {endDate} · {travelers} traveller{travelers === 1 ? '' : 's'}</p>
+          <p className="mt-1">Cancellation: {selectedServices.map((service) => service.cancellation_policy || service.cancellationPolicy).filter(Boolean).join('; ') || 'See the selected provider terms before payment.'}</p>
+          <p className="mt-2 text-amber-300">The displayed estimate is not a booking. The backend revalidates availability, prices and payment status.</p>
+        </div>
+      )}
       <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 text-sm text-slate-200">
         Cost per person: <strong className="text-amber-300">{formatCurrency(costEstimate.costPerPerson)}</strong>
         <span className="ml-2 text-xs text-slate-500">({travelers} traveler{travelers === 1 ? '' : 's'})</span>
@@ -2151,6 +2574,11 @@ function TripCostEstimate({ costEstimate, travelers, budgetStatus, budgetRecomme
         <strong>{isOverBudget ? 'Budget warning: ' : 'Budget check: '}</strong>
         {calculatedRecommendation}
       </div>
+      {Array.isArray(costEstimate.unavailable) && costEstimate.unavailable.length > 0 && (
+        <p className="mt-3 text-xs text-slate-400">
+          Prices are unavailable for: {costEstimate.unavailable.join(', ')}. These amounts are excluded until a real price is supplied.
+        </p>
+      )}
       {(Number(costEstimate.package) > 0 || Number(costEstimate.guide) > 0 || Number(costEstimate.accommodation) > 0) && (
         <button type="button" onClick={onBook} disabled={bookingLoading} className="mt-5 w-full rounded-xl bg-amber-400 px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-950 hover:bg-amber-300 disabled:opacity-60">
           {bookingLoading ? 'Opening secure payment...' : 'Book selected guide, hotel or package'}
@@ -2203,7 +2631,8 @@ function TransportPlanSection({ transportPlan }) {
 function TransportCard({ journey }) {
   const mode = String(journey.mode || '').toLowerCase();
   const icon = mode.includes('train') ? '🚆' : mode.includes('bus') ? '🚌' : mode.includes('walk') ? '🚶' : mode.includes('auto') ? '🛺' : mode.includes('taxi') || mode.includes('cab') ? '🚕' : '🚗';
-  const bookingLabel = journey.bookingType === 'train' ? 'Check Train' : journey.bookingType === 'bus' ? 'Check Bus' : 'Check Route';
+  const isTrain = journey.bookingType === 'official-railway' || mode.includes('train');
+  const bookingLabel = isTrain ? 'Book Train Ticket on IRCTC' : journey.bookingType === 'bus' ? 'Check Bus' : 'Check Route';
   const bookingUrl = journey.bookingUrl;
   return (
     <article className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5">
@@ -2218,18 +2647,66 @@ function TransportCard({ journey }) {
         <InfoStrip label="Mode" value={journey.mode || 'Let AI decide'} />
         <InfoStrip label="Distance" value={journey.distance || (journey.distanceKm ? `${journey.distanceKm} km` : 'Unavailable')} />
         <InfoStrip label="Duration" value={journey.duration || (journey.durationHours ? `${journey.durationHours} hours` : 'Verify before travel')} />
-        <InfoStrip label="Cost" value={journey.estimatedCost || (journey.estimatedCost !== undefined ? formatCurrency(journey.estimatedCost) : 'Check current fare')} />
+        <InfoStrip label="Cost" value={isTrain ? 'Unavailable until verified by railway provider' : journey.estimatedCost || (journey.estimatedCost !== undefined ? formatCurrency(journey.estimatedCost) : 'Check current fare')} />
       </div>
       <p className="mt-4 text-xs leading-relaxed text-slate-400">{journey.notes || 'Travel details require verification before departure.'}</p>
       <div className="mt-3 flex items-center justify-between gap-3">
         <span className="text-[10px] uppercase tracking-wider text-amber-300">{journey.availabilityStatus || 'Availability not checked'}</span>
         {bookingUrl && (
-          <a href={bookingUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-amber-400 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-950 hover:bg-amber-300">
+          <a href={isTrain ? 'https://www.irctc.co.in/' : bookingUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-amber-400 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-950 hover:bg-amber-300">
             {bookingLabel}
           </a>
         )}
       </div>
     </article>
+  );
+}
+
+function TrainBookingAssistant({ outbound, returnJourney, bookingNotes, onNotesChange, onSaveDraft, draftSaving }) {
+  const journeys = [
+    ['Outbound', outbound],
+    ['Return', returnJourney]
+  ].filter(([, journey]) => journey);
+  const hasLiveResults = journeys.some(([, journey]) => journey.status === 'live' && journey.results?.length);
+  return (
+    <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/5 p-4 text-left">
+      <p className="font-semibold text-amber-200">Train information</p>
+      {hasLiveResults ? journeys.map(([label, journey]) => journey.status === 'live' && journey.results?.length > 0 && (
+        <div key={label} className="mt-3 space-y-2">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label} options returned by authorized provider</p>
+          {journey.results.map((train, index) => (
+            <div key={`${train.trainNumber || train.trainName || 'train'}-${index}`} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
+              <p className="font-semibold text-white">{train.trainName || 'Train'}{train.trainNumber ? ` · ${train.trainNumber}` : ''}</p>
+              <p className="mt-1">{train.origin} → {train.destination} · {train.departure || 'Departure unavailable'} to {train.arrival || 'Arrival unavailable'}</p>
+              <p className="mt-1 text-amber-300">Fare: {train.fare !== null && train.fare !== undefined ? formatCurrency(train.fare) : 'Unavailable'} · Availability: {train.availability ?? 'Unavailable'}</p>
+            </div>
+          ))}
+        </div>
+      )) : (
+        <p className="mt-2 text-xs leading-relaxed text-slate-400">
+          Live train information is unavailable. No schedule, fare, seat availability, PNR or booking has been confirmed.
+        </p>
+      )}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <a href="https://www.irctc.co.in/" target="_blank" rel="noopener noreferrer" className="rounded-lg bg-amber-400 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-950 hover:bg-amber-300">
+          Book Train Ticket on IRCTC
+        </a>
+        <span className="text-[10px] text-slate-500">IRCTC booking happens outside BirsaAI.</span>
+      </div>
+      <label className="mt-4 block text-xs text-slate-400">
+        Optional train booking note
+        <textarea
+          value={bookingNotes}
+          onChange={(event) => onNotesChange(event.target.value)}
+          rows={2}
+          placeholder="Record your own train details; these are not verified by BirsaAI."
+          className="input mt-2 resize-none text-xs"
+        />
+      </label>
+      <button type="button" onClick={onSaveDraft} disabled={draftSaving} className="mt-2 rounded-lg border border-slate-700 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-300 hover:border-amber-400 disabled:opacity-60">
+        {draftSaving ? 'Saving...' : 'Save train note to itinerary'}
+      </button>
+    </div>
   );
 }
 
